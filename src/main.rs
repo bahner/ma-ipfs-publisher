@@ -73,6 +73,13 @@ async fn main() -> Result<()> {
     let mut endpoint = ma_core::new_ma_endpoint(secrets.iroh_secret_key).await?;
 
     let rpc_messages = endpoint.service(rpc::RPC_PROTOCOL_ID);
+    // Register optional IPFS service before building/publishing our DID
+    // document so `ma.services` includes `/ma/ipfs/0.0.1` when enabled.
+    let ipfs_messages = if ipfs_publisher_enabled {
+        Some(endpoint.service(IPFS_PROTOCOL_ID))
+    } else {
+        None
+    };
 
     // ── Build and sign own DID document, publish in background ──
     let ma = endpoint.ma_extension().kind("runtime");
@@ -113,7 +120,7 @@ async fn main() -> Result<()> {
 
     // ── Optional IPFS publisher service ──
     let mut ipfs_state = if ipfs_publisher_enabled {
-        let messages = endpoint.service(IPFS_PROTOCOL_ID);
+        let messages = ipfs_messages.expect("ipfs inbox exists when publisher is enabled");
         info!("IPFS publisher service enabled");
         Some(ipfs::IpfsServiceState {
             messages,

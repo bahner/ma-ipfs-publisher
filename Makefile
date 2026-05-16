@@ -1,4 +1,4 @@
-BINARY   := ma-ipfs-publisher
+BINARY   := ma
 CARGO    := cargo
 RELEASE  := target/release/$(BINARY)
 DEBUG    := target/debug/$(BINARY)
@@ -29,7 +29,7 @@ clean:
 	rm -f $(BINARY)
 
 publish: $(BINARY)
-	scp $(BINARY) ma-ipfs-publisher:bin/
+	scp $(BINARY) ma:bin/
 
 distclean: clean
 	rm -rf Cargo.lock
