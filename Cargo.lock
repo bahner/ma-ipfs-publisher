@@ -2271,6 +2271,7 @@ dependencies = [
  "axum",
  "ciborium",
  "clap",
+ "directories",
  "fluent",
  "ma-core",
  "serde_json",

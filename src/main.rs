@@ -12,6 +12,7 @@ use axum::routing::get;
 use axum::Router;
 use ciborium::Value as CborValue;
 use clap::Parser;
+use directories::ProjectDirs;
 use ma_core::config::{Config, MaArgs, SecretBundle};
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::ipfs_add;
@@ -22,10 +23,10 @@ use ma_core::{
 use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const MA_DEFAULT_SLUG: &str = "ma-ipfs-publisher";
-const DEFAULT_ACL_YAML: &str = "acl:\n  - \"*\"\n";
+const OPEN_ACL_YAML: &str = include_str!("../default.acl");
 const RPC_PROTOCOL_ID: &str = "/ma/rpc/0.0.1";
 const CONTENT_TYPE_RPC: &str = "application/x-ma-rpc";
 const CONTENT_TYPE_RPC_REPLY: &str = "application/x-ma-rpc-reply";
@@ -39,7 +40,9 @@ struct Cli {
     #[command(flatten)]
     ma: MaArgs,
 
-    /// Optional ACL YAML file. Format: `acl: ["*", "did:ma:...", "!did:ma:..."]`
+    /// ACL YAML file. Default: `$XDG_CONFIG_HOME/ma/ma-ipfs-publisher.acl`.
+    /// If the default path does not exist the daemon starts with open access (`*`).
+    /// Format: `acl: ["*", "did:ma:...", "!did:ma:..."]`
     #[arg(long)]
     acl_file: Option<PathBuf>,
 
@@ -209,7 +212,7 @@ async fn main() -> Result<()> {
                         to = %message.to,
                         id = %message.id,
                         content_type = %message.content_type,
-                        content = %preview_ma_message_content(&message.content),
+                        content_len = message.content.len(),
                         "{}", i18n::t("received-encrypted-ma-msg")
                     );
                     {
@@ -253,17 +256,19 @@ async fn main() -> Result<()> {
 async fn do_publish_own_document(
     kubo_url: String,
     doc_cbor: Vec<u8>,
-    mut ipns_secret_key: Vec<u8>,
+    ipns_secret_key: Vec<u8>,
 ) -> Result<()> {
+    // Wrap in Zeroizing so the key bytes are cleared on return *and* on
+    // async cancellation (e.g. if the 2-minute timeout fires and drops
+    // the future before the explicit zeroize at the end could run).
+    let ipns_secret_key = Zeroizing::new(ipns_secret_key);
     let publisher = IpfsDidPublisher::new(&kubo_url)?;
     publisher.wait_until_ready(10).await?;
-    let result = publisher
+    publisher
         .publish_document(&doc_cbor, &ipns_secret_key)
         .await
         .context("kubo publish failed for own DID document")
-        .map(|_| ());
-    ipns_secret_key.zeroize();
-    result
+        .map(|_| ())
 }
 
 fn load_secret_bundle(config: &Config) -> Result<SecretBundle> {
@@ -384,25 +389,24 @@ async fn handle_ipfs_message(
     ctx: &IpfsHandlerCtx<'_>,
     replay_guard: &mut ReplayGuard,
 ) -> Result<()> {
+    acl_check(acl, &message.from)?;
+
     let headers = message.headers();
     replay_guard
         .check_and_insert(&headers)
         .context("replay or invalid headers")?;
-
-    acl_check(acl, &message.from)?;
 
     let validated = validate_ipfs_request(message).context("invalid /ma/ipfs/0.0.1 request")?;
 
     match validated {
         ValidatedIpfsRequest::DidDocumentPublish(v) => {
             info!(from = %message.from, id = %message.id, "{}", i18n::t("did-publish-request-received"));
-            let mut key = v.ipns_secret_key.clone();
+            let key = Zeroizing::new(v.ipns_secret_key.clone());
             let cid = ctx.publisher
                 .publish_document(&v.document_bytes, &key)
                 .await
                 .context("kubo DID publish failed")?
                 .ok_or_else(|| anyhow::anyhow!("publisher returned no CID"))?;
-            key.fill(0);
             info!(did = %v.document_did.id(), cid = %cid, "{}", i18n::t("document-published"));
 
             // Send CID reply back to sender's RPC inbox.
@@ -584,14 +588,33 @@ async fn handle_status_json(State(stats): State<SharedStats>) -> impl IntoRespon
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn load_acl(path: Option<&std::path::Path>) -> Result<Acl> {
-    let yaml = if let Some(path) = path {
-        std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read ACL file {}", path.display()))?
-    } else {
-        DEFAULT_ACL_YAML.to_string()
-    };
-    Acl::new_from_yaml(&yaml).context("invalid ACL YAML")
+fn default_acl_path() -> Result<PathBuf> {
+    ProjectDirs::from("", "ma", "ma")
+        .ok_or_else(|| anyhow!("cannot determine XDG base directories"))
+        .map(|d| d.config_dir().join(format!("{MA_DEFAULT_SLUG}.acl")))
+}
+
+fn load_acl(explicit: Option<&std::path::Path>) -> Result<Acl> {
+    match explicit {
+        Some(p) => {
+            let yaml = std::fs::read_to_string(p)
+                .with_context(|| format!("failed to read ACL file {}", p.display()))?;
+            info!(path = %p.display(), "ACL loaded from file");
+            Acl::new_from_yaml(&yaml).context("invalid ACL YAML")
+        }
+        None => {
+            let default_path = default_acl_path()?;
+            if default_path.exists() {
+                let yaml = std::fs::read_to_string(&default_path)
+                    .with_context(|| format!("failed to read ACL file {}", default_path.display()))?;
+                info!(path = %default_path.display(), "ACL loaded from default path");
+                Acl::new_from_yaml(&yaml).context("invalid ACL YAML")
+            } else {
+                info!(path = %default_path.display(), "no ACL file found, starting with open access");
+                Acl::new_from_yaml(OPEN_ACL_YAML).context("invalid open ACL")
+            }
+        }
+    }
 }
 
 fn now_unix_secs() -> u64 {
@@ -600,14 +623,4 @@ fn now_unix_secs() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn preview_ma_message_content(content: &[u8]) -> String {
-    const MAX_PREVIEW_CHARS: usize = 256;
 
-    let mut preview = String::from_utf8_lossy(content).into_owned();
-    if preview.chars().count() > MAX_PREVIEW_CHARS {
-        preview = preview.chars().take(MAX_PREVIEW_CHARS).collect::<String>() + "...";
-    }
-
-    // Keep logs one-line and readable even for binary-ish payloads.
-    preview.replace('\n', "\\n").replace('\r', "\\r")
-}
