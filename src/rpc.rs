@@ -1,23 +1,23 @@
-//! `/ma/rpc/0.0.1` handler: `#root` entity management, Wasm entity dispatch,
-//! and ping dispatch.
+//! `/ma/rpc/0.0.1` handler: entity dispatch and CRUD management.
 
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
-use ma_core::{ipfs_add, Acl, Did, IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY};
+use ma_core::{
+    ipfs_add, Did, IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
+};
 use tracing::{debug, info, warn};
 
-use crate::acl::acl_check;
+use crate::acl::{acl_check, AclCache, AclMap, PERM_X};
 use crate::entity::{
-    CastInput, EntityNode, IpldLink, KindNode, LocalMessage, PluginCtx, PluginKind,
+    CastInput, EntityNode, IpldLink, LocalMessage, NamespaceNode, PluginCtx, PluginKind,
     RuntimeManifest, SendEnvelope,
 };
-use crate::plugin::{EntityRegistry, RootPlugin};
+use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
 
 pub const RPC_PROTOCOL_ID: &str = "/ma/rpc/0.0.1";
-const PING_ATOM: &str = ":ping";
 
 // ── Handler context ────────────────────────────────────────────────────────────
 
@@ -28,20 +28,17 @@ pub struct RpcHandlerCtx<'a> {
     pub kubo_rpc_url: &'a str,
     pub entity_registry: EntityRegistry,
     pub stats: SharedStats,
-    /// Loaded `/ma/root/0.0.1` plugin, if available.
-    /// When `Some`, `#root` requests are dispatched through the plugin.
-    /// When `None`, the runtime falls back to built-in hardcoded handlers.
-    pub root_plugin: Option<Arc<RootPlugin>>,
+    pub acl_cache: AclCache,
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 pub async fn handle_rpc_message(
     message: &ma_core::Message,
-    acl: &Acl,
+    acl: &AclMap,
     ctx: &RpcHandlerCtx<'_>,
 ) -> Result<()> {
-    acl_check(acl, &message.from)?;
+    acl_check(acl, &message.from, PERM_X)?;
 
     if message.message_type != MESSAGE_TYPE_RPC {
         return Err(anyhow!(
@@ -51,14 +48,11 @@ pub async fn handle_rpc_message(
         ));
     }
 
-    let term: CborValue = ciborium::de::from_reader(message.content.as_slice())
+    let term: CborValue = ciborium::de::from_reader(message.payload().as_slice())
         .context("invalid CBOR in RPC message")?;
 
-    // Fragment routing: messages addressed to `did:ma:<ipns>#fragment`.
+    // Fragment routing: messages addressed to `did:ma:<ipns>#fragment` → entity plugin.
     if let Some(fragment) = extract_fragment(&message.to, ctx.our_did) {
-        if fragment == "root" {
-            return handle_root_entity(message, term, ctx).await;
-        }
         let ep = ctx.entity_registry.read().await.get(fragment).cloned();
         return if let Some(entity) = ep {
             match handle_entity_plugin_message(message, term, &entity, ctx).await {
@@ -81,33 +75,8 @@ pub async fn handle_rpc_message(
         };
     }
 
-    // Unfragmented: route to the `ping` entity plugin if loaded, else built-in.
-    if !matches!(&term, CborValue::Text(s) if s == PING_ATOM) {
-        debug!(from = %message.from, atom = ?term, "{}", crate::i18n::t("unknown-rpc-atom"));
-        return Ok(());
-    }
-
-    {
-        let mut s = ctx.stats.write().await;
-        s.pings_received += 1;
-    }
-
-    let ping_ep = ctx.entity_registry.read().await.get("ping").cloned();
-    if let Some(entity) = ping_ep {
-        info!(from = %message.from, "{}", crate::i18n::t("ping-received"));
-        return match handle_entity_plugin_message(message, term, &entity, ctx).await {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                let reason = err.to_string();
-                warn!(from = %message.from, error = %reason, "ping plugin dispatch failed");
-                send_rpc_error_reply(message, ctx, &reason).await
-            }
-        };
-    }
-
-    // Fallback: no ping entity registered — log and ignore.
-    warn!(from = %message.from, "ping received but no ping entity is loaded — ignoring");
-    Ok(())
+    // Unfragmented: CRUD management verbs (entities/kinds/config).
+    handle_root_builtin(message, term, ctx).await
 }
 
 // ── Fragment extraction ────────────────────────────────────────────────────────
@@ -122,7 +91,7 @@ fn extract_fragment<'a>(to: &'a str, our_did: &str) -> Option<&'a str> {
 
 /// Decode `CborValue::Text(":verb")` or `CborValue::Array([":verb", args…])`
 /// into `(verb, args)`.
-fn parse_cbor_verb(term: CborValue) -> Result<(String, Vec<String>)> {
+fn parse_cbor_verb(term: CborValue) -> Result<(String, Vec<CborValue>)> {
     Ok(match term {
         CborValue::Text(s) => (s, vec![]),
         CborValue::Array(items) => {
@@ -130,10 +99,7 @@ fn parse_cbor_verb(term: CborValue) -> Result<(String, Vec<String>)> {
             let Some(CborValue::Text(verb)) = it.next() else {
                 return Err(anyhow!("RPC array must start with a text verb atom"));
             };
-            let args: Vec<String> = it
-                .filter_map(|v| if let CborValue::Text(s) = v { Some(s) } else { None })
-                .collect();
-            (verb, args)
+            (verb, it.collect())
         }
         _ => return Err(anyhow!("RPC payload must be a CBOR text atom or array")),
     })
@@ -167,10 +133,12 @@ async fn handle_entity_plugin_message(
 
     let plugin_ctx = PluginCtx {
         self_did: message.to.clone(),
-        owner: entity.owner.clone(),
     };
 
-    let cast_input = CastInput { msg: local_msg, ctx: plugin_ctx };
+    let cast_input = CastInput {
+        msg: local_msg,
+        ctx: plugin_ctx,
+    };
     let result = match entity.kind {
         PluginKind::Stateless => entity.handle_cast(&cast_input)?,
         PluginKind::Stateful => entity.handle_call(&cast_input)?,
@@ -189,7 +157,9 @@ async fn handle_entity_plugin_message(
                 debug!(fragment = %entity.fragment, %cid, "plugin state saved via ma_set_state");
                 entity.mark_saved(state_bytes);
             }
-            Err(e) => warn!(fragment = %entity.fragment, error = %e, "failed to persist plugin state"),
+            Err(e) => {
+                warn!(fragment = %entity.fragment, error = %e, "failed to persist plugin state");
+            }
         }
     }
     Ok(())
@@ -214,7 +184,7 @@ async fn send_envelope(env: SendEnvelope, ctx: &RpcHandlerCtx<'_>, fragment: &st
         &env.to,
         msg_type,
         &env.content_type,
-        env.content,
+        &env.content,
         ctx.signing_key,
     )
     .context("failed to build plugin outbound message")?;
@@ -227,7 +197,10 @@ async fn send_envelope(env: SendEnvelope, ctx: &RpcHandlerCtx<'_>, fragment: &st
         .await
     {
         Ok(mut outbox) => {
-            outbox.send(&msg).await.context("plugin message send failed")?;
+            outbox
+                .send(&msg)
+                .await
+                .context("plugin message send failed")?;
             if msg_type == MESSAGE_TYPE_RPC_REPLY {
                 info!(
                     to = %env.to,
@@ -243,244 +216,45 @@ async fn send_envelope(env: SendEnvelope, ctx: &RpcHandlerCtx<'_>, fragment: &st
     Ok(())
 }
 
-// ── #root entity ───────────────────────────────────────────────────────────────
+// ── Dot-path operation parser ──────────────────────────────────────────────────
 
-async fn handle_root_entity(
-    message: &ma_core::Message,
-    term: CborValue,
-    ctx: &RpcHandlerCtx<'_>,
-) -> Result<()> {
-    // If a /ma/root/0.0.1 plugin is loaded, use it.
-    if let Some(root_plugin) = ctx.root_plugin.as_ref() {
-        return handle_root_via_plugin(message, term, root_plugin, ctx).await;
-    }
-    // Fallback: built-in hardcoded handlers (v0 compat).
-    handle_root_builtin(message, term, ctx).await
+/// Parse `":entities.ping:"` into path segments and optional tail.
+///
+/// - `":entities.ping:"` → `(["entities","ping"], Some(""))` — set/delete
+/// - `":entities.ping:edit"` → `(["entities","ping"], Some("edit"))` — verb
+/// - `":entities.ping"` → `(["entities","ping"], None)` — get
+fn parse_dot_op(verb: &str) -> (Vec<String>, Option<String>) {
+    let body = verb.strip_prefix(':').unwrap_or(verb);
+    let (path_part, tail) = body.find(':').map_or((body, None), |pos| {
+        (&body[..pos], Some(body[pos + 1..].to_string()))
+    });
+    let segs = path_part
+        .split('.')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    (segs, tail)
 }
 
-// ── Root plugin dispatch ───────────────────────────────────────────────────────
-
-async fn handle_root_via_plugin(
-    message: &ma_core::Message,
-    term: CborValue,
-    root_plugin: &RootPlugin,
-    ctx: &RpcHandlerCtx<'_>,
-) -> Result<()> {
-    use crate::plugin::root_abi::{CommitIntent, Op, RootRequest, RootResponse};
-
-    // 1. Parse the incoming CBOR term into op + path + optional args.
-    let req = build_root_request(message, term, ctx)?;
-
-    // 2. Snapshot the manifest as JSON for `ma_root_read` and `subtree_snapshot`.
-    let root_cid = current_root_cid(ctx).await?;
-    let manifest: RuntimeManifest = crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
-    let manifest_json = serde_json::to_value(&manifest)
-        .context("serialising manifest for root plugin")?;
-
-    // 3. Build the CBOR-encoded RootRequest with the relevant subtree snapshot.
-    let req_with_snapshot = RootRequest {
-        subtree_snapshot: subtree_snapshot_for_path(&req.path, &manifest, ctx.kubo_rpc_url).await?,
-        ..req
-    };
-
-    let mut input_cbor = Vec::new();
-    crate::plugin::encode_cbor(&req_with_snapshot, &mut input_cbor)
-        .context("encoding RootRequest")?;
-
-    // 4. Call the plugin.
-    let output_bytes = tokio::task::spawn_blocking({
-        let plugin = Arc::clone(ctx.root_plugin.as_ref().unwrap());
-        move || plugin.call(manifest_json, input_cbor)
-    })
-    .await
-    .context("root plugin task join")??;
-
-    // 5. Parse response.
-    let resp: RootResponse = crate::plugin::decode_cbor(&output_bytes)
-        .context("decoding RootResponse")?;
-
-    if !resp.ok {
-        let reason = resp.error.unwrap_or_else(|| "root plugin error".to_string());
-        warn!(from = %message.from, %reason, "root plugin returned error");
-        return send_rpc_error_reply(message, ctx, &reason).await;
-    }
-
-    // 6. Execute commit intents atomically.
-    let new_root_cid = if resp.commit.is_empty() {
-        root_cid.clone()
-    } else {
-        apply_commit_intents(resp.commit, &root_cid, ctx).await?
-    };
-
-    // 7. Reply to caller.
-    let result_val = resp.result.unwrap_or(serde_json::Value::Null);
-    let reply_bytes = serde_json::to_vec(&result_val)?;
-    info!(from = %message.from, root_cid = %new_root_cid, "root plugin dispatch ok");
-    send_rpc_reply(message, ctx, "application/json", reply_bytes).await
-}
-
-/// Build a `RootRequest` (without `subtree_snapshot`) from the incoming CBOR term.
-/// The `:crud` tuple convention: `[":crud", "op", "path"]` or
-/// `[":crud", "op", "path", "value_or_cid"]`.
-/// Legacy verbs (`:list-entities`, etc.) are translated to `Op::Verb`.
-fn build_root_request(
-    message: &ma_core::Message,
-    term: CborValue,
-    ctx: &RpcHandlerCtx<'_>,
-) -> Result<crate::plugin::root_abi::RootRequest> {
-    use crate::plugin::root_abi::{Op, RootRequest};
-
-    let owner_did = ctx.our_did.to_string();
-
-    let (verb, args) = parse_cbor_verb(term)?;
-
-    let (op, path, value, cid, plugin_verb) = match verb.as_str() {
-        ":crud" => {
-            // [":crud", "op", "path"] or [":crud", "op", "path", "value_or_cid"]
-            if args.len() < 2 {
-                return Err(anyhow!(":crud requires at least op and path args"));
-            }
-            let op = match args[0].as_str() {
-                "get" => Op::Get,
-                "set" => Op::Set,
-                "delete" => Op::Delete,
-                "apply_cid" => Op::ApplyCid,
-                "verb" => Op::Verb,
-                other => return Err(anyhow!("unknown crud op: {other}")),
-            };
-            let path = args[1].clone();
-            let value = if op == Op::Set { args.get(2).cloned() } else { None };
-            let cid = if op == Op::ApplyCid { args.get(2).cloned() } else { None };
-            let v = if op == Op::Verb { args.get(2).cloned() } else { None };
-            (op, path, value, cid, v)
-        }
-        // Legacy verbs — translate to Op::Verb on the entities subtree.
-        ":list-entities" => (Op::Get, "entities".to_string(), None, None, None),
-        ":create-entity" | ":delete-entity" => {
-            return Err(anyhow!(
-                "legacy verb '{verb}' not supported via root plugin; use :crud"
-            ))
-        }
-        other => (Op::Verb, "entities".to_string(), None, None, Some(other.to_string())),
-    };
-
-    Ok(RootRequest {
-        op,
-        path,
-        value,
-        cid,
-        verb: plugin_verb,
-        caller_did: message.from.clone(),
-        message_id: message.id.clone(),
-        owner_did,
-        subtree_snapshot: serde_json::Value::Null, // filled in by caller
-    })
-}
-
-/// Build the relevant subtree snapshot JSON for the plugin.
-async fn subtree_snapshot_for_path(
-    path: &str,
-    manifest: &RuntimeManifest,
-    _kubo_url: &str,
-) -> Result<serde_json::Value> {
-    let root = path.split('.').next().unwrap_or("");
-    Ok(match root {
-        "entities" => serde_json::to_value(&manifest.entities)?,
-        "kinds" => serde_json::to_value(&manifest.kinds)?,
-        "config" => serde_json::to_value(&manifest.config)?,
-        _ => serde_json::Value::Null,
-    })
-}
-
-/// Execute a list of `CommitIntent`s by mutating the manifest in IPFS.
-/// Returns the new root CID after all commits are applied.
-async fn apply_commit_intents(
-    intents: Vec<crate::plugin::root_abi::CommitIntent>,
-    root_cid: &str,
-    ctx: &RpcHandlerCtx<'_>,
-) -> Result<String> {
-    use crate::plugin::root_abi::CommitIntent;
-
-    let mut manifest: RuntimeManifest =
-        crate::kubo::dag_get(ctx.kubo_rpc_url, root_cid).await?;
-
-    for intent in intents {
-        match intent {
-            CommitIntent::UpsertEntity { name, node } => {
-                // If the node is an IPLD-link sentinel `{ "/": cid }`, the runtime
-                // must fetch and validate the entity from that CID.
-                if let Some(cid_str) = node.get("/").and_then(|v| v.as_str()) {
-                    let entity_node: EntityNode =
-                        crate::kubo::dag_get(ctx.kubo_rpc_url, cid_str)
-                            .await
-                            .with_context(|| format!("fetching entity node from {cid_str}"))?;
-                    let stored_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &entity_node)
-                        .await
-                        .with_context(|| format!("re-storing entity {name}"))?;
-                    // Load plugin async (best-effort; if it fails, entity is still registered)
-                    match crate::plugin::EntityPlugin::load(name.clone(), &entity_node, ctx.kubo_rpc_url).await {
-                        Ok(ep) => { ctx.entity_registry.write().await.insert(name.clone(), Arc::new(ep)); }
-                        Err(e) => warn!(name = %name, error = %e, "entity plugin load after apply_cid failed"),
-                    }
-                    manifest.entities.insert(name, IpldLink::new(&stored_cid));
-                } else {
-                    // Inline entity node — deserialise, store, register.
-                    let entity_node: EntityNode = serde_json::from_value(node.clone())
-                        .with_context(|| format!("deserialising entity node for {name}"))?;
-                    let stored_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &entity_node)
-                        .await
-                        .with_context(|| format!("storing entity {name}"))?;
-                    match crate::plugin::EntityPlugin::load(name.clone(), &entity_node, ctx.kubo_rpc_url).await {
-                        Ok(ep) => { ctx.entity_registry.write().await.insert(name.clone(), Arc::new(ep)); }
-                        Err(e) => warn!(name = %name, error = %e, "entity plugin load after upsert failed"),
-                    }
-                    manifest.entities.insert(name, IpldLink::new(&stored_cid));
-                }
-            }
-
-            CommitIntent::DeleteEntity { name } => {
-                ctx.entity_registry.write().await.remove(&name);
-                manifest.entities.remove(&name);
-            }
-
-            CommitIntent::UpsertKind { family, implementation, node } => {
-                use crate::entity::{KindRef, IpldLink as Link};
-                let kind_cid = if let Some(cid_str) = node.get("/").and_then(|v| v.as_str()) {
-                    cid_str.to_string()
-                } else {
-                    let kind_node: crate::entity::KindNode = serde_json::from_value(node)
-                        .with_context(|| format!("deserialising kind {family}/{implementation}"))?;
-                    crate::kubo::dag_put(ctx.kubo_rpc_url, &kind_node).await?
-                };
-                manifest.kinds
-                    .entry(family)
-                    .or_default()
-                    .insert(implementation, KindRef::Link(Link::new(&kind_cid)));
-            }
-
-            CommitIntent::DeleteKind { family, implementation } => {
-                if let Some(fam) = manifest.kinds.get_mut(&family) {
-                    fam.remove(&implementation);
-                }
-            }
-
-            CommitIntent::SetConfig { key, value } => {
-                manifest.config.insert(key, value);
-            }
-
-            CommitIntent::DeleteConfig { key } => {
-                manifest.config.remove(&key);
-            }
-        }
-    }
-
+/// Fetch the manifest, apply `f` to mutate it, re-store, and pin-swap.
+/// Returns the new root CID.
+async fn with_manifest<F>(ctx: &RpcHandlerCtx<'_>, f: F) -> Result<String>
+where
+    F: FnOnce(&mut RuntimeManifest) -> Result<()>,
+{
+    let old_cid = current_root_cid(ctx).await?;
+    let mut manifest: RuntimeManifest = crate::kubo::dag_get(ctx.kubo_rpc_url, &old_cid).await?;
+    f(&mut manifest)?;
     let new_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &manifest).await?;
+    if let Err(e) = crate::kubo::pin_update(ctx.kubo_rpc_url, &old_cid, &new_cid).await {
+        warn!(old = %old_cid, new = %new_cid, error = %e, "pin/update failed");
+    }
     update_stats_entities(ctx).await;
     ctx.stats.write().await.root_cid = Some(new_cid.clone());
     Ok(new_cid)
 }
 
-// ── Built-in #root handlers (legacy fallback) ─────────────────────────────────
+// ── Built-in #root handlers ────────────────────────────────────────────────────
 
 async fn handle_root_builtin(
     message: &ma_core::Message,
@@ -488,52 +262,107 @@ async fn handle_root_builtin(
     ctx: &RpcHandlerCtx<'_>,
 ) -> Result<()> {
     let (verb, args) = parse_cbor_verb(term)?;
+    let (segs, tail_owned) = parse_dot_op(&verb);
+    let tail: Option<&str> = tail_owned.as_deref();
+    let ns: &str = segs.first().map_or("", String::as_str);
+    let rest: &[String] = if segs.len() > 1 { &segs[1..] } else { &[] };
 
-    match verb.as_str() {
-        ":list-entities" => {
-            info!("{}", crate::i18n::t("root-list-entities"));
-            let names: Vec<String> =
-                ctx.entity_registry.read().await.keys().cloned().collect();
-            let reply = serde_json::to_vec(&names)?;
-            send_rpc_reply(message, ctx, "application/json", reply).await
+    match ns {
+        "entities" => handle_entities_ns(message, rest, tail, args, &verb, ctx).await,
+        "kinds" => handle_kinds_ns(message, rest, tail, args, &verb, ctx).await,
+        "config" => handle_config_ns(message, rest, tail, args, &verb, ctx).await,
+        "ping" => {
+            info!("{}", crate::i18n::t("ping-received"));
+            let mut pong = Vec::new();
+            ciborium::ser::into_writer(&CborValue::Text(":pong".to_string()), &mut pong)
+                .context("encode :pong")?;
+            send_rpc_reply(message, ctx, pong).await
         }
+        other => handle_namespace_op(message, other, rest, tail, args, &verb, ctx).await,
+    }
+}
 
-        ":create-entity" => {
-            // args: name, kind, behavior_cid, [acl_entry…]
-            if args.len() < 3 {
-                return Err(anyhow!(
-                    ":create-entity requires at least 3 args: name kind behavior_cid [acl…]"
-                ));
+async fn handle_entities_ns(
+    message: &ma_core::Message,
+    rest: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match rest.len() {
+        0 => match (tail, args.as_slice()) {
+            (None, []) => {
+                info!("{}", crate::i18n::t("root-list-entities"));
+                let names: Vec<String> = ctx.entity_registry.read().await.keys().cloned().collect();
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(&names, &mut out)
+                    .context("encoding entity list as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
             }
-            let (name, kind, behavior_cid) = (&args[0], &args[1], &args[2]);
-            let acl: Vec<String> = if args.len() > 3 {
-                args[3..].to_vec()
-            } else {
-                vec!["*".into()]
-            };
-            info!(name = %name, "{}", crate::i18n::t("root-create-entity"));
+            _ => Err(anyhow!("unknown entities operation: {verb}")),
+        },
+        1 => handle_single_entity(message, &rest[0], tail, args, verb, ctx).await,
+        2.. => handle_entity_field(message, &rest[0], &rest[1..], tail, args, verb, ctx).await,
+    }
+}
 
-            let wasi = lookup_kind_wasi(ctx, kind).await?;
-
-            let node = EntityNode {
-                name: name.clone(),
-                kind: kind.clone(),
-                behavior: IpldLink::new(behavior_cid.as_str()),
-                state: None,
-                owner: message.from.clone(),
-                acl,
-                wasi,
-            };
-
-            let entity_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &node)
+#[allow(clippy::too_many_lines)]
+async fn handle_single_entity(
+    message: &ma_core::Message,
+    name: &String,
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match (tail, args.as_slice()) {
+        (None, []) => {
+            let root_cid = current_root_cid(ctx).await?;
+            let manifest: RuntimeManifest =
+                crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+            let link = manifest
+                .entities
+                .get(name.as_str())
+                .ok_or_else(|| anyhow!("entity not found: {name}"))?;
+            let entity: EntityNode = crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?;
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(&entity, &mut out)
+                .context("serialising entity node as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        (Some(""), []) => {
+            let name = name.as_str();
+            ctx.entity_registry.write().await.remove(name);
+            let new_root = with_manifest(ctx, |m| {
+                m.entities.remove(name);
+                Ok(())
+            })
+            .await?;
+            info!(name = %name, cid = %new_root, "{}", crate::i18n::t("entity-deleted"));
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
+                .context("encoding delete reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        (Some(""), [CborValue::Text(path)]) => {
+            let name = name.as_str();
+            // Accept bare CIDs, /ipfs/<cid>, and /ipns/<key> paths.
+            let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
                 .await
-                .with_context(|| format!("dag_put entity {name}"))?;
-
-            let new_root_cid = update_manifest_add(ctx, name, &entity_cid).await?;
-
-            let reply_json = match crate::plugin::EntityPlugin::load(
-                name.clone(),
-                &node,
+                .with_context(|| format!("resolving path {path}"))?;
+            let cid = cid.as_str();
+            let entity_node: EntityNode = crate::kubo::dag_get(ctx.kubo_rpc_url, cid)
+                .await
+                .with_context(|| format!("fetching entity node from {cid}"))?;
+            let new_root = with_manifest(ctx, |m| {
+                m.entities.insert(name.to_string(), IpldLink::new(cid));
+                Ok(())
+            })
+            .await?;
+            match crate::plugin::EntityPlugin::load(
+                name.to_string(),
+                &entity_node,
                 ctx.kubo_rpc_url,
             )
             .await
@@ -542,51 +371,742 @@ async fn handle_root_builtin(
                     ctx.entity_registry
                         .write()
                         .await
-                        .insert(name.clone(), Arc::new(ep));
-                    update_stats_entities(ctx).await;
-                    ctx.stats.write().await.root_cid = Some(new_root_cid.clone());
-                    info!(name = %name, cid = %entity_cid, "{}", crate::i18n::t("entity-created"));
-                    serde_json::json!({"cid": new_root_cid, "entity_cid": entity_cid, "status": "ok"})
+                        .insert(name.to_string(), Arc::new(ep));
                 }
-                Err(e) => {
-                    warn!(name = %name, error = %e, "{}", crate::i18n::t("entity-load-failed"));
-                    serde_json::json!({
-                        "cid": new_root_cid, "entity_cid": entity_cid,
-                        "status": "plugin_load_failed", "error": e.to_string()
-                    })
-                }
-            };
-            send_rpc_reply(message, ctx, "application/json", serde_json::to_vec(&reply_json)?).await
-        }
-
-        ":delete-entity" => {
-            if args.is_empty() {
-                return Err(anyhow!(":delete-entity requires an entity name arg"));
+                Err(e) => warn!(
+                    name = %name,
+                    error = %e,
+                    "{}",
+                    crate::i18n::t("entity-load-failed")
+                ),
             }
-            let name = &args[0];
-            info!(name = %name, "{}", crate::i18n::t("root-delete-entity"));
-
-            ctx.entity_registry.write().await.remove(name);
-            let new_root_cid = update_manifest_remove(ctx, name).await?;
-
-            info!(name = %name, cid = %new_root_cid, "{}", crate::i18n::t("entity-deleted"));
-            update_stats_entities(ctx).await;
-            ctx.stats.write().await.root_cid = Some(new_root_cid.clone());
-
-            let reply = serde_json::to_vec(
-                &serde_json::json!({"cid": new_root_cid, "status": "ok"}),
-            )?;
-            send_rpc_reply(message, ctx, "application/json", reply).await
+            info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-created"));
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding upsert reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
         }
-
-        other => {
-            debug!(verb = %other, "{}", crate::i18n::t("unknown-rpc-atom"));
-            Ok(())
+        (Some("edit"), []) => {
+            let root_cid = current_root_cid(ctx).await?;
+            let manifest: RuntimeManifest =
+                crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+            let entity: EntityNode = match manifest.entities.get(name.as_str()) {
+                Some(link) => crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?,
+                None => EntityNode {
+                    kind: String::new(),
+                    behavior: IpldLink::new(""),
+                    acl: String::new(),
+                    state: None,
+                },
+            };
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(&entity, &mut out).context("encoding entity as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
         }
+        (Some("edit"), [CborValue::Bytes(dag_cbor)]) => {
+            let name = name.as_str();
+            let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, dag_cbor)
+                .await
+                .with_context(|| format!("dag_put_raw for entity {name}"))?;
+            let entity_node: EntityNode = crate::kubo::dag_get(ctx.kubo_rpc_url, &cid)
+                .await
+                .with_context(|| format!("validating entity node at {cid}"))?;
+            with_manifest(ctx, |m| {
+                m.entities.insert(name.to_string(), IpldLink::new(&cid));
+                Ok(())
+            })
+            .await?;
+            match crate::plugin::EntityPlugin::load(
+                name.to_string(),
+                &entity_node,
+                ctx.kubo_rpc_url,
+            )
+            .await
+            {
+                Ok(ep) => {
+                    ctx.entity_registry
+                        .write()
+                        .await
+                        .insert(name.to_string(), Arc::new(ep));
+                }
+                Err(e) => warn!(
+                    name = %name,
+                    error = %e,
+                    "{}",
+                    crate::i18n::t("entity-load-failed")
+                ),
+            }
+            info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-created"));
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(cid),
+                ]),
+                &mut out,
+            )
+            .context("encoding edit-save reply CID")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        _ => Err(anyhow!("unknown entities.{name} operation: {verb}")),
     }
 }
 
-// ── Manifest CRUD helpers ──────────────────────────────────────────────────────
+// ── Entity field helpers ──────────────────────────────────────────────────────
+
+/// Fetch an `EntityNode` by name from the current manifest.
+async fn fetch_entity_node(ctx: &RpcHandlerCtx<'_>, name: &str) -> Result<EntityNode> {
+    let root_cid = current_root_cid(ctx).await?;
+    let manifest: RuntimeManifest = crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+    let link = manifest
+        .entities
+        .get(name)
+        .ok_or_else(|| anyhow!("entity not found: {name}"))?;
+    crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid)
+        .await
+        .with_context(|| format!("fetching entity {name} from {}", link.cid))
+}
+
+/// Re-publish a mutated `EntityNode` and point the manifest at the new CID.
+/// Returns the new entity CID.
+async fn update_entity_node(
+    ctx: &RpcHandlerCtx<'_>,
+    name: &str,
+    entity: &EntityNode,
+) -> Result<String> {
+    let entity_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, entity)
+        .await
+        .with_context(|| format!("publishing updated entity {name}"))?;
+    with_manifest(ctx, |m| {
+        m.entities
+            .insert(name.to_string(), IpldLink::new(&entity_cid));
+        Ok(())
+    })
+    .await?;
+    Ok(entity_cid)
+}
+
+/// Dispatch `entities.<name>.<field>[.<sub>…]` sub-path operations.
+///
+/// Peels off the first segment and routes to the field handler, which receives
+/// the remaining sub-path.  Adding support for a new field or deeper sub-path
+/// only requires changes in the relevant handler — this function stays stable.
+async fn handle_entity_field(
+    message: &ma_core::Message,
+    name: &String,
+    field_path: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    let Some((field, sub_path)) = field_path.split_first() else {
+        return Err(anyhow!("empty field path in {verb}"));
+    };
+
+    // Generic GET / :edit — works for any leaf field without field-specific code.
+    if matches!(tail, None | Some("edit")) && args.is_empty() && sub_path.is_empty() {
+        let entity = fetch_entity_node(ctx, name).await?;
+        let mut entity_cbor = Vec::new();
+        ciborium::ser::into_writer(&entity, &mut entity_cbor)
+            .context("serializing entity for field GET")?;
+        let cbor_map: CborValue = ciborium::de::from_reader(entity_cbor.as_slice())
+            .context("re-parsing entity CBOR map")?;
+        if let CborValue::Map(entries) = cbor_map {
+            if let Some((_, value)) = entries
+                .into_iter()
+                .find(|(k, _)| matches!(k, CborValue::Text(s) if s == field))
+            {
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(&value, &mut out)
+                    .context("encoding field value as CBOR")?;
+                return send_rpc_reply(message, ctx, out).await;
+            }
+        }
+        return Err(anyhow!("field '{field}' not found in entity '{name}'"));
+    }
+
+    match field.as_str() {
+        "acl" => handle_entity_acl_field(message, name, sub_path, tail, args, verb, ctx).await,
+        _ => Err(anyhow!("unknown entity field '{field}' in {verb}")),
+    }
+}
+
+async fn handle_entity_acl_field(
+    message: &ma_core::Message,
+    name: &String,
+    sub_path: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    if !sub_path.is_empty() {
+        return Err(anyhow!(
+            "entity field 'acl' sub-path '{}' not yet implemented",
+            sub_path.join(".")
+        ));
+    }
+    match (tail, args.as_slice()) {
+        // :edit <dag-cbor-bytes> — receive edited ACL from ego, store CID ref.
+        (Some("edit"), [CborValue::Bytes(dag_cbor)]) => {
+            let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, dag_cbor)
+                .await
+                .with_context(|| format!("dag_put_raw for ACL of entity {name}"))?;
+            let mut entity = fetch_entity_node(ctx, name).await?;
+            entity.acl = cid.clone();
+            let entity_cid = update_entity_node(ctx, name, &entity).await?;
+            info!(name = %name, acl_cid = %cid, entity_cid = %entity_cid, "entity ACL updated");
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(entity_cid),
+                ]),
+                &mut out,
+            )
+            .context("encoding edit-save reply CID")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        // : <path-or-cid> — set ACL reference to a resolved CID.
+        (Some(""), [CborValue::Text(path)]) => {
+            let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
+                .await
+                .with_context(|| format!("resolving ACL path {path}"))?;
+            let mut entity = fetch_entity_node(ctx, name).await?;
+            entity.acl = cid.clone();
+            let entity_cid = update_entity_node(ctx, name, &entity).await?;
+            info!(name = %name, acl_cid = %cid, entity_cid = %entity_cid, "entity ACL set from path");
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(entity_cid),
+                ]),
+                &mut out,
+            )
+            .context("encoding acl-set reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        _ => Err(anyhow!("unknown entities.{name}.acl operation: {verb}")),
+    }
+}
+
+async fn handle_kinds_ns(
+    message: &ma_core::Message,
+    rest: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match rest {
+        [] => match (tail, args.as_slice()) {
+            (None | Some("edit"), []) => {
+                let root_cid = current_root_cid(ctx).await?;
+                let manifest: RuntimeManifest =
+                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(&manifest.kinds, &mut out)
+                    .context("encoding kinds as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            _ => Err(anyhow!("unknown kinds operation: {verb}")),
+        },
+        [family] => match (tail, args.as_slice()) {
+            (None | Some("edit"), []) => {
+                let root_cid = current_root_cid(ctx).await?;
+                let manifest: RuntimeManifest =
+                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                let val = manifest
+                    .kinds
+                    .get(family.as_str())
+                    .ok_or_else(|| anyhow!("kind family not found: {family}"))?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(val, &mut out)
+                    .context("encoding kind family as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            _ => Err(anyhow!("unknown kinds.{family} operation: {verb}")),
+        },
+        [family, implementation] => match (tail, args.as_slice()) {
+            (None | Some("edit"), []) => {
+                let root_cid = current_root_cid(ctx).await?;
+                let manifest: RuntimeManifest =
+                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                let val = manifest
+                    .kinds
+                    .get(family.as_str())
+                    .and_then(|f| f.get(implementation.as_str()))
+                    .ok_or_else(|| anyhow!("kind not found: {family}/{implementation}"))?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(val, &mut out).context("encoding kind impl as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            (Some(""), []) => {
+                let family = family.as_str().to_string();
+                let implementation = implementation.as_str().to_string();
+                with_manifest(ctx, |m| {
+                    if let Some(fam) = m.kinds.get_mut(&family) {
+                        fam.remove(&implementation);
+                    }
+                    Ok(())
+                })
+                .await?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
+                    .context("encoding kinds-delete reply as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            (Some(""), [CborValue::Text(cid)]) => {
+                use crate::entity::{IpldLink as Link, KindRef};
+                let family = family.as_str().to_string();
+                let implementation = implementation.as_str().to_string();
+                let cid = cid.as_str().to_string();
+                let new_root = with_manifest(ctx, |m| {
+                    m.kinds
+                        .entry(family)
+                        .or_default()
+                        .insert(implementation, KindRef::Link(Link::new(&cid)));
+                    Ok(())
+                })
+                .await?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(
+                    &CborValue::Array(vec![
+                        CborValue::Text(":ok".to_string()),
+                        CborValue::Text(new_root),
+                    ]),
+                    &mut out,
+                )
+                .context("encoding kinds-set reply as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            _ => Err(anyhow!(
+                "unknown kinds.{family}.{implementation} operation: {verb}"
+            )),
+        },
+        _ => Err(anyhow!("unknown kinds operation: {verb}")),
+    }
+}
+
+async fn handle_config_ns(
+    message: &ma_core::Message,
+    rest: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match rest {
+        [] => match (tail, args.as_slice()) {
+            (None | Some("edit"), []) => {
+                let root_cid = current_root_cid(ctx).await?;
+                let manifest: RuntimeManifest =
+                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(&manifest.config, &mut out)
+                    .context("encoding config as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            _ => Err(anyhow!("unknown config operation: {verb}")),
+        },
+        [key] => match (tail, args.as_slice()) {
+            (None | Some("edit"), []) => {
+                let root_cid = current_root_cid(ctx).await?;
+                let manifest: RuntimeManifest =
+                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                let val = manifest
+                    .config
+                    .get(key.as_str())
+                    .ok_or_else(|| anyhow!("config key not found: {key}"))?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(val, &mut out)
+                    .context("encoding config value as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            (Some(""), []) => {
+                let key = key.as_str().to_string();
+                with_manifest(ctx, |m| {
+                    m.config.remove(&key);
+                    Ok(())
+                })
+                .await?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
+                    .context("encoding config-delete reply as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            (Some(""), [CborValue::Text(value)]) => {
+                let key = key.as_str().to_string();
+                let json_val: serde_json::Value = serde_json::from_str(value.as_str())
+                    .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
+                let new_root = with_manifest(ctx, |m| {
+                    m.config.insert(key, json_val);
+                    Ok(())
+                })
+                .await?;
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(
+                    &CborValue::Array(vec![
+                        CborValue::Text(":ok".to_string()),
+                        CborValue::Text(new_root),
+                    ]),
+                    &mut out,
+                )
+                .context("encoding config-set reply as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            _ => Err(anyhow!("unknown config.{key} operation: {verb}")),
+        },
+        _ => Err(anyhow!("unknown config operation: {verb}")),
+    }
+}
+
+// ── Namespace dispatching `:ns.*` ─────────────────────────────────────────────
+
+/// Handles that may not be used as namespace names.
+const RESERVED_NS: &[&str] = &["acl", "protocol", "kinds", "entities", "locales", "config"];
+
+/// Routes `:ns`, `:ns.groups.*`, and `:ns.acl.*` operations.
+async fn handle_namespace_op(
+    message: &ma_core::Message,
+    ns: &str,
+    rest: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    if ns.is_empty() {
+        debug!(verb = %verb, "{}", crate::i18n::t("unknown-rpc-atom"));
+        return Ok(());
+    }
+    let category = rest.first().map_or("", String::as_str);
+    let sub_rest: &[String] = if rest.len() > 1 { &rest[1..] } else { &[] };
+    match category {
+        "acl" => handle_ns_acl(message, ns, sub_rest, tail, args, verb, ctx).await,
+        "" => handle_ns_root(message, ns, tail, args, verb, ctx).await,
+        key => handle_ns_blob(message, ns, key, sub_rest, tail, args, verb, ctx).await,
+    }
+}
+
+/// `:ns` \u2014 namespace root: describe or create.
+async fn handle_ns_root(
+    message: &ma_core::Message,
+    ns: &str,
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match (tail, args.as_slice()) {
+        (None, []) => {
+            let root_cid = current_root_cid(ctx).await?;
+            let manifest: RuntimeManifest =
+                crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+            match manifest.namespaces.get(ns) {
+                Some(ns_node) => {
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(ns_node, &mut out)
+                        .context("encoding namespace node as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                None => {
+                    send_rpc_error_reply(message, ctx, &format!("namespace not found: {ns}")).await
+                }
+            }
+        }
+        // Create / upsert namespace: `[:ns:, "did:ma:owner"]`
+        (Some(""), [CborValue::Text(owner_did)]) => {
+            let owner_did = owner_did.clone();
+            if RESERVED_NS.contains(&ns) {
+                return send_rpc_error_reply(
+                    message,
+                    ctx,
+                    &format!("namespace handle '{ns}' is reserved"),
+                )
+                .await;
+            }
+            let new_root = with_manifest(ctx, |m| {
+                m.namespaces
+                    .entry(ns.to_string())
+                    .or_insert_with(|| NamespaceNode {
+                        did: owner_did.clone(),
+                        ..Default::default()
+                    });
+                Ok(())
+            })
+            .await?;
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding namespace-create reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        _ => Err(anyhow!("unknown namespace '{ns}' operation: {verb}")),
+    }
+}
+
+/// `:ns.acl.*` — CID k/v store for named ACL documents.
+///
+/// ACLs are stored as IPLD links to `kind: /ma/acl/0.0.1` documents and
+/// cached in memory as [`AclMap`]s for zero-overhead lookup at call time.
+/// Edit and publish to IPFS, then register the CID here.
+#[allow(clippy::too_many_lines)]
+async fn handle_ns_acl(
+    message: &ma_core::Message,
+    ns: &str,
+    rest: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match rest {
+        [] => match (tail, args.as_slice()) {
+            (None, []) => {
+                let root_cid = current_root_cid(ctx).await?;
+                let manifest: RuntimeManifest =
+                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                let ns_node = manifest
+                    .namespaces
+                    .get(ns)
+                    .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                let names: Vec<CborValue> = ns_node
+                    .acl
+                    .keys()
+                    .map(|k| CborValue::Text(k.clone()))
+                    .collect();
+                let mut out = Vec::new();
+                ciborium::ser::into_writer(
+                    &CborValue::Array(vec![
+                        CborValue::Text(":ok".to_string()),
+                        CborValue::Array(names),
+                    ]),
+                    &mut out,
+                )
+                .context("encoding ACL names as CBOR")?;
+                send_rpc_reply(message, ctx, out).await
+            }
+            _ => Err(anyhow!("unknown {ns}.acl operation: {verb}")),
+        },
+        [acl_name] => {
+            let acl_name = acl_name.clone();
+            match (tail, args.as_slice()) {
+                (None, []) => {
+                    let root_cid = current_root_cid(ctx).await?;
+                    let manifest: RuntimeManifest =
+                        crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                    let ns_node = manifest
+                        .namespaces
+                        .get(ns)
+                        .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                    let link = ns_node
+                        .acl
+                        .get(&acl_name)
+                        .ok_or_else(|| anyhow!("ACL not found: {ns}.acl.{acl_name}"))?;
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(&CborValue::Text(link.cid.clone()), &mut out)
+                        .context("encoding ACL CID as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                (Some(""), [CborValue::Text(cid)]) => {
+                    let cid = cid.clone();
+                    let sender = message.from.clone();
+                    let our_did = ctx.our_did.to_string();
+                    let new_root = with_manifest(ctx, |m| {
+                        let ns_node = m
+                            .namespaces
+                            .get_mut(ns)
+                            .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                        if sender != ns_node.did && sender != our_did {
+                            return Err(anyhow!("permission denied for {sender} on {ns}"));
+                        }
+                        ns_node.acl.insert(acl_name.clone(), IpldLink::new(&cid));
+                        Ok(())
+                    })
+                    .await?;
+                    // Fetch the ACL document and populate the in-memory cache.
+                    let cache_key = format!("{ns}.acl.{acl_name}");
+                    match crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid).await {
+                        Ok(acl_map) => {
+                            ctx.acl_cache
+                                .write()
+                                .await
+                                .insert(cache_key.clone(), acl_map);
+                            info!(key = %cache_key, cid = %cid, "ACL loaded into cache");
+                        }
+                        Err(e) => {
+                            warn!(key = %cache_key, cid = %cid, error = %e, "failed to load ACL into cache; CID registered but cache not updated");
+                        }
+                    }
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(
+                        &CborValue::Array(vec![
+                            CborValue::Text(":ok".to_string()),
+                            CborValue::Text(new_root),
+                        ]),
+                        &mut out,
+                    )
+                    .context("encoding acl-set reply as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                (Some(""), []) => {
+                    let sender = message.from.clone();
+                    let our_did = ctx.our_did.to_string();
+                    let new_root = with_manifest(ctx, |m| {
+                        let ns_node = m
+                            .namespaces
+                            .get_mut(ns)
+                            .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                        if sender != ns_node.did && sender != our_did {
+                            return Err(anyhow!("permission denied for {sender} on {ns}"));
+                        }
+                        ns_node.acl.remove(&acl_name);
+                        Ok(())
+                    })
+                    .await?;
+                    let cache_key = format!("{ns}.acl.{acl_name}");
+                    ctx.acl_cache.write().await.remove(&cache_key);
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(
+                        &CborValue::Array(vec![
+                            CborValue::Text(":ok".to_string()),
+                            CborValue::Text(new_root),
+                        ]),
+                        &mut out,
+                    )
+                    .context("encoding acl-delete reply as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                _ => Err(anyhow!("unknown {ns}.acl.{acl_name} operation: {verb}")),
+            }
+        }
+        _ => Err(anyhow!("unknown {ns}.acl operation: {verb}")),
+    }
+}
+
+/// `:ns.<key>[.<sub>…]` — IPLD link store with lazy nested traversal.
+///
+/// Any namespace key other than `acl` is a plain IPLD link stored as
+/// `{"/": "bafy…"}` in the namespace `extra` map.  The runtime does not
+/// inspect or validate the linked content.
+///
+/// - **GET** at any depth: look up the root CID, then follow
+///   `sub_path` segments via `ipfs dag resolve`.
+/// - **SET / DELETE** only at depth 1 (directly in `extra`).
+///   Nested structures are managed externally by the namespace owner.
+#[allow(clippy::too_many_arguments)]
+async fn handle_ns_blob(
+    message: &ma_core::Message,
+    ns: &str,
+    key: &str,
+    sub_path: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match (tail, args.as_slice()) {
+        (None, []) => {
+            let root_cid = current_root_cid(ctx).await?;
+            let manifest: RuntimeManifest =
+                crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+            let ns_node = manifest
+                .namespaces
+                .get(ns)
+                .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+            let link_cid = ns_node
+                .extra
+                .get(key)
+                .and_then(|v| v.get("/"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("key not found: {ns}.{key}"))?;
+            let resolved_cid = if sub_path.is_empty() {
+                link_cid.to_string()
+            } else {
+                let ipfs_path = format!("/ipfs/{}/{}", link_cid, sub_path.join("/"));
+                crate::kubo::dag_resolve(ctx.kubo_rpc_url, &ipfs_path)
+                    .await
+                    .with_context(|| format!("traversing {ns}.{key}.{}", sub_path.join(".")))?
+            };
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(&CborValue::Text(resolved_cid), &mut out)
+                .context("encoding blob CID as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        (Some(""), [CborValue::Text(cid)]) if sub_path.is_empty() => {
+            let cid = cid.clone();
+            let sender = message.from.clone();
+            let our_did = ctx.our_did.to_string();
+            let new_root = with_manifest(ctx, |m| {
+                let ns_node = m
+                    .namespaces
+                    .get_mut(ns)
+                    .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                if sender != ns_node.did && sender != our_did {
+                    return Err(anyhow!("permission denied for {sender} on {ns}"));
+                }
+                ns_node
+                    .extra
+                    .insert(key.to_string(), serde_json::json!({ "/": cid }));
+                Ok(())
+            })
+            .await?;
+            info!(ns = %ns, key = %key, cid = %cid, "blob registered");
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding blob-set reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        (Some(""), []) if sub_path.is_empty() => {
+            let sender = message.from.clone();
+            let our_did = ctx.our_did.to_string();
+            let new_root = with_manifest(ctx, |m| {
+                let ns_node = m
+                    .namespaces
+                    .get_mut(ns)
+                    .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                if sender != ns_node.did && sender != our_did {
+                    return Err(anyhow!("permission denied for {sender} on {ns}"));
+                }
+                ns_node.extra.remove(key);
+                Ok(())
+            })
+            .await?;
+            info!(ns = %ns, key = %key, "blob deleted");
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding blob-delete reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        _ => Err(anyhow!("unknown {ns}.{key} operation: {verb}")),
+    }
+}
 
 async fn current_root_cid(ctx: &RpcHandlerCtx<'_>) -> Result<String> {
     ctx.stats
@@ -594,47 +1114,7 @@ async fn current_root_cid(ctx: &RpcHandlerCtx<'_>) -> Result<String> {
         .await
         .root_cid
         .clone()
-    .ok_or_else(|| anyhow!("no root_cid; run --gen-root-cid first"))
-}
-
-async fn update_manifest_add(
-    ctx: &RpcHandlerCtx<'_>,
-    name: &str,
-    entity_cid: &str,
-) -> Result<String> {
-    let root_cid = current_root_cid(ctx).await?;
-    let mut manifest: RuntimeManifest =
-        crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
-    manifest
-        .entities
-        .insert(name.to_string(), IpldLink::new(entity_cid));
-    let new_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &manifest).await?;
-    info!(name = %name, cid = %new_cid, "{}", crate::i18n::t("root-entity-updated"));
-    Ok(new_cid)
-}
-
-async fn update_manifest_remove(ctx: &RpcHandlerCtx<'_>, name: &str) -> Result<String> {
-    let root_cid = current_root_cid(ctx).await?;
-    let mut manifest: RuntimeManifest =
-        crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
-    manifest.entities.remove(name);
-    let new_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &manifest).await?;
-    info!(name = %name, cid = %new_cid, "{}", crate::i18n::t("root-entity-updated"));
-    Ok(new_cid)
-}
-
-async fn lookup_kind_wasi(ctx: &RpcHandlerCtx<'_>, kind: &str) -> Result<bool> {
-    let root_cid = current_root_cid(ctx).await?;
-    let manifest: RuntimeManifest = crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid)
-        .await
-        .context("fetching runtime manifest for kind lookup")?;
-    let kind_link = manifest
-        .kind_link(kind)
-        .ok_or_else(|| anyhow!("unknown kind in manifest: {kind}"))?;
-    let kind_node: KindNode = crate::kubo::dag_get(ctx.kubo_rpc_url, &kind_link.cid)
-        .await
-        .with_context(|| format!("fetching kind node for {kind}"))?;
-    Ok(kind_node.wasi)
+        .ok_or_else(|| anyhow!("no root_cid; run --gen-root-cid first"))
 }
 
 async fn update_stats_entities(ctx: &RpcHandlerCtx<'_>) {
@@ -647,7 +1127,6 @@ async fn update_stats_entities(ctx: &RpcHandlerCtx<'_>) {
 async fn send_rpc_reply(
     incoming: &ma_core::Message,
     ctx: &RpcHandlerCtx<'_>,
-    content_type: &str,
     content: Vec<u8>,
 ) -> Result<()> {
     let sender = Did::try_from(incoming.from.as_str())
@@ -657,8 +1136,8 @@ async fn send_rpc_reply(
         ctx.our_did,
         &incoming.from,
         MESSAGE_TYPE_RPC_REPLY,
-        content_type,
-        content,
+        "application/cbor",
+        &content,
         ctx.signing_key,
     )
     .context("failed to build RPC reply")?;
@@ -675,7 +1154,6 @@ async fn send_rpc_reply(
             info!(
                 to = %incoming.from,
                 reply_to = %incoming.id,
-                content_type = %content_type,
                 "{}",
                 crate::i18n::t("rpc-reply-sent")
             );
@@ -701,6 +1179,5 @@ async fn send_rpc_error_reply(
         &mut payload,
     )
     .context("failed to encode RPC error reply")?;
-    send_rpc_reply(incoming, ctx, "application/cbor", payload).await
+    send_rpc_reply(incoming, ctx, payload).await
 }
-

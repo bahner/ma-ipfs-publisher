@@ -16,6 +16,9 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
 
 ## Design principles
 
+- **No backward compatibility.** This is active development. Clean, simple code
+  is preferred over compatibility shims for hypothetical users. Remove old forms
+  without hesitation when a better design emerges.
 - **Two services, nothing more.** Only `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1`
   are registered. No gossip, no additional RPC.
 - **No local protocol code.** All publish logic, validation, secret-bundle
@@ -37,9 +40,10 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   matches the document's DID.
 - **Replay protection.** A `ReplayGuard` (sliding 120-second window) is applied
   to `/ma/ipfs/0.0.1` messages before any processing.
-- **ACL with deny-wins semantics.** Deny rules override any allow, including
-  `*`. Both the full DID-URL and bare identity are checked. An identity-level
-  deny (`!did:ma:…`) blocks all DID-URLs under that identity automatically.
+- **ACL with deny-wins semantics.** An explicit `null`/empty-string value in the
+  `AclMap` denies a principal and overrides any wildcard allow. Permission bits
+  are `r` (4/read), `w` (2/write — required for `/ma/ipfs/0.0.1`), `x`
+  (1/execute — required for `/ma/rpc/0.0.1`).
 
 ## Dependencies
 
@@ -51,7 +55,7 @@ axum = { version = "0.7", default-features = false, features = ["http1", "tokio"
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 directories = "5"
-ma-core = { version = "0.10.10", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+ma-core = { version = "0.10.14", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 serde_json = "1"
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
@@ -63,9 +67,8 @@ zeroize = "1"
 direct `ma-did` dependency is required.
 
 > **Development note:** A `[patch.crates-io] ma-core = { path = "../rust-ma-core" }`
-> is active in `Cargo.toml` while new `ma-core` features (`ValidatedIpfsRequest`,
-> `ValidatedIpfsStore`, `ipfs_add`) are not yet in a published release.
-> Remove the patch when a new version is published.
+> is active in `Cargo.toml` during development. Remove the patch and update the
+> version when publishing.
 
 ## Configuration
 
@@ -127,24 +130,33 @@ ma --status-bind 0.0.0.0:5003
 
 ## ACL format
 
-The ACL YAML must contain an `acl:` sequence. The default when no file is
-supplied is open (`*`).
+The ACL YAML must contain an `acl:` map from principal to permission string.
+The default when no file is supplied is open (`"*": "rwx"`).
 
 ```yaml
 acl:
-  - "*"                  # public access
-  - "!did:ma:<bad>"      # deny this identity and all its DID-URLs
-  - "!did:ma:<worse>"
+  "*": "rwx"          # everyone: full access
+  "did:ma:bob": "rx"  # read + execute, no write
+  "did:ma:eve":       # null = explicit deny
 ```
+
+Permission bits:
+
+| Letter | Value | Required by |
+|--------|-------|-------------|
+| `r` | 4 | Read — list/fetch |
+| `w` | 2 | Write — `/ma/ipfs/0.0.1` |
+| `x` | 1 | Execute — `/ma/rpc/0.0.1` |
 
 Rules:
 
-- **Deny always wins** over allow, including over `*`.
-- An identity-level deny (`!did:ma:<ipns>` with no fragment) blocks every
-  DID-URL under that identity (any fragment, any path).
-- Entries are validated by `Did::try_from` (via `ma-core`) at load time —
-  invalid entries cause a hard error.
-- ACL is checked on `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1` messages.
+- **Deny always wins** over wildcard allow. An explicit `null` entry (bare key
+  or `key: ~` or `key: null` in YAML) is an explicit deny.
+- Direct principal lookup wins over the `"*"` wildcard.
+- Identity-level entries match all DID-URL callers for that identity (fragment
+  is stripped before lookup).
+- ACL is checked on `/ma/ipfs/0.0.1` (`w` required) and `/ma/rpc/0.0.1` (`x`
+  required) messages.
 
 ## Status web server
 
@@ -170,6 +182,21 @@ The JSON object contains:
 }
 ```
 
+## Wire format rules
+
+**All data over iroh transport is CBOR. No JSON is sent between peers.**
+
+- RPC requests: CBOR atom (`:verb`) or array `[":verb", arg1, arg2, …]`.
+- RPC replies: CBOR atom (`:pong`, `:ok`, `:error`) or tuple `[":ok", payload]` / `[":error", reason]`.
+- Entity content in replies: CBOR-encoded `EntityNode` (same structure as
+  stored in IPFS DAG-CBOR), never JSON.
+- Entity definitions written by users in ego use **YAML** as the human-readable
+  format. YAML is stored to IPFS via `dag_put` (DAG-CBOR), and the resulting
+  CID is the canonical reference.
+
+The one exception: Kubo's HTTP RPC API (`/api/v0/…`) speaks JSON. That is an
+internal implementation detail of `crate::kubo` and is invisible to peers.
+
 ## RPC protocol
 
 Content types are defined in ma-spec, not ma-core — they are string literals:
@@ -179,14 +206,80 @@ Content types are defined in ma-spec, not ma-core — they are string literals:
 | Request | `application/x-ma-rpc` |
 | Reply | `application/x-ma-rpc-reply` |
 
-RPC atoms are CBOR-encoded text strings beginning with `:`.
+RPC verbs are CBOR-encoded text strings beginning with `:`.
 
-The daemon handles exactly one RPC verb:
+### Dot-path grammar
 
-- **`:ping`** — accepted only on `/ma/rpc/0.0.1`; replies with `:pong` to
-  `did:ma:<sender_ipns>#ping`. The reply message sets `reply_to` to the
-  originating message's ID. The reply is delivered via `endpoint.outbox()`
-  using the sender's resolved RPC endpoint.
+Unfragmented RPC messages (addressed to `did:ma:<ipns>`, no fragment) use a
+dot-path grammar rooted in five namespaces:
+
+```
+:entities[.<name>][:<verb>]           — entity management
+:kinds[.<family>[.<impl>]]            — kind/protocol registry (read-only)
+:config[.<key>]                       — runtime config
+:groups[.<handle>[.<group>]][:<verb>] — group namespace management
+:ping                                 — liveness check
+```
+
+| Pattern | Meaning |
+|---------|---------|
+| `:entities` | list all entity names |
+| `:entities.<name>` | get EntityNode (as CBOR) |
+| `:entities.<name>:` | delete entity |
+| `:entities.<name>: <cid>` | upsert entity by CID (fetches DAG-CBOR from IPFS) |
+| `:entities.<name>:edit` | return current EntityNode for client-side editing |
+| `:ping` | reply `:pong` |
+
+Fragment-addressed messages (`did:ma:<ipns>#<name>`) are routed directly to
+the named entity plugin (Wasm `handle_cast`).
+
+### `:edit` verb
+
+`:entities.<name>:edit` returns the current `EntityNode` as CBOR. The **client**
+(ego) is responsible for opening an editor so the user can modify it. After
+editing, the client publishes the updated node to IPFS (`dag_put`), then sends
+`:entities.<name>: <new-cid>` to register it. The runtime never initiates an
+editor session; it only stores and retrieves by CID.
+
+### `:ping`
+
+Replies with `:pong` to `did:ma:<sender_ipns>#ping`. The reply sets `reply_to`
+to the originating message's ID and is delivered via `endpoint.outbox()`.
+
+### Groups — `:groups.*`
+
+Groups are named sets of principals used in `AclMap` entries as
+`group:<handle>.<groupname>`.
+
+**Namespace model:** Groups are organised into *namespaces* identified by a
+handle string. Each namespace has one owner DID. The `runtime` handle is
+reserved and bootstrapped with `RuntimeManifest.owner` as its owner.
+
+**Rust types** (`src/acl.rs` / `src/entity.rs`):
+```rust
+pub struct GroupNamespace {
+    pub owner: String,
+    pub groups: HashMap<String, Vec<String>>,
+}
+pub type Groups = HashMap<String, GroupNamespace>;
+```
+
+| Operation | Auth |
+|-----------|------|
+| List handles / list group names / list members | any |
+| `[:groups.<handle>:, <did>]` — create namespace (owner = `<did>`) | any; `runtime` handle: manifest owner only |
+| `[:groups.<handle>:, <did>]` — transfer ownership | current namespace owner or manifest owner |
+| Set / add / remove members in `<handle>.<group>` | namespace owner |
+| Delete group (`groups.<handle>.<group>:`) | namespace owner |
+| Delete namespace (`groups.<handle>:`) | **FORBIDDEN** — namespaces cannot be deleted |
+
+**Owner bypass:** `RuntimeManifest.owner` has implicit `rwx` on all operations
+(checked before any ACL evaluation). This allows recovery from misconfiguration
+or identity loss.
+
+**Stale ACL references:** Deleting a group leaves dead `group:handle.name`
+entries in ACL maps. These resolve to zero members and fail-closed (no access
+granted). Only the namespace owner can re-create the group; no hijacking possible.
 
 ## ma-core API used
 

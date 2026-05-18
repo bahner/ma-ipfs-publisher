@@ -1,23 +1,23 @@
+mod acl;
+mod bootstrap;
+mod entity;
 mod i18n;
 mod ipfs;
-mod acl;
-mod rpc;
-mod status;
-mod entity;
 mod kubo;
 mod plugin;
-mod bootstrap;
+mod rpc;
+mod status;
 
+use anyhow::{anyhow, Context, Result};
+use cid::Cid;
+use clap::Parser;
+use ma_core::config::{Config, MaArgs, SecretBundle};
+use ma_core::ipfs::IpfsDidPublisher;
+use ma_core::{ipns_from_secret, Ipld, ReplayGuard, IPFS_PROTOCOL_ID};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use anyhow::{anyhow, Context, Result};
-use clap::Parser;
-use cid::Cid;
-use ma_core::config::{Config, MaArgs, SecretBundle};
-use ma_core::ipfs::IpfsDidPublisher;
-use ma_core::{ipns_from_secret, Ipld, ReplayGuard, IPFS_PROTOCOL_ID};
 use tracing::{debug, error, info, warn};
 use zeroize::Zeroize;
 
@@ -75,14 +75,16 @@ async fn main() -> Result<()> {
         // key, and re-save so the bundle is complete before first use.
         let config = Config::from_args(&cli.ma, MA_DEFAULT_SLUG)?;
         let mut bundle = load_secret_bundle(&config)?;
-        bundle.generate_key("runtime_ipns")
+        bundle
+            .generate_key("runtime_ipns")
             .context("failed to generate 'runtime_ipns' key")?;
         let passphrase = config
             .secret_bundle_passphrase
             .as_deref()
             .ok_or_else(|| anyhow!("secret_bundle_passphrase missing after gen_headless"))?;
         let bundle_path = config.effective_secret_bundle()?;
-        bundle.save(&bundle_path, passphrase)
+        bundle
+            .save(&bundle_path, passphrase)
             .context("failed to re-save bundle with 'runtime_ipns' key")?;
         return Ok(());
     }
@@ -105,16 +107,16 @@ async fn main() -> Result<()> {
             &config.kubo_rpc_url,
             &cli.locales_dir,
             runtime_config,
+            cli.root_cid.as_deref(),
         )
-            .await
-            .context("bootstrap failed")?;
+        .await
+        .context("bootstrap failed")?;
         println!("{}", result.root_cid);
         return Ok(());
     }
 
     if let Some(ref cid) = cli.root_cid {
-        Cid::try_from(cid.as_str())
-            .with_context(|| format!("invalid --root-cid CID: {cid}"))?;
+        Cid::try_from(cid.as_str()).with_context(|| format!("invalid --root-cid CID: {cid}"))?;
         info!(root_cid = %cid, "runtime head reset for this session");
     }
 
@@ -127,12 +129,10 @@ async fn main() -> Result<()> {
             .await
             .context("kubo RPC is not reachable for locales refresh")?;
 
-        let refresh = bootstrap::refresh_locales_in_manifest(
-            &config.kubo_rpc_url,
-            &cli.locales_dir,
-        )
-        .await
-        .context("refreshing locales failed")?;
+        let refresh =
+            bootstrap::refresh_locales_in_manifest(&config.kubo_rpc_url, &cli.locales_dir)
+                .await
+                .context("refreshing locales failed")?;
         info!(
             locales_cid = %refresh.locales_cid,
             "Locales refreshed"
@@ -181,8 +181,8 @@ async fn main() -> Result<()> {
 
     // ma.runtime skal være en ekte CID-link (bafy...) for direkte DAG-traversering.
     let ma = if let Some(ref rc) = root_cid {
-        let runtime_cid = Cid::try_from(rc.as_str())
-            .with_context(|| format!("invalid root_cid: {rc}"))?;
+        let runtime_cid =
+            Cid::try_from(rc.as_str()).with_context(|| format!("invalid root_cid: {rc}"))?;
         ma_base.clone().extra("runtime", Ipld::Link(runtime_cid))
     } else {
         ma_base.clone()
@@ -193,9 +193,12 @@ async fn main() -> Result<()> {
 
     let our_did = our_document.id.clone();
 
-    let did_publish_timeout_secs = get_u64_setting(&config, "did_document_publishing_timeout_secs", 120);
-    let did_publish_lifetime_hours = get_u64_setting(&config, "did_document_publishing_lifetime_hours", 8760);
-    let did_publish_interval_secs = get_u64_setting(&config, "did_document_publishing_interval_secs", 300);
+    let did_publish_timeout_secs =
+        get_u64_setting(&config, "did_document_publishing_timeout_secs", 120);
+    let did_publish_lifetime_hours =
+        get_u64_setting(&config, "did_document_publishing_lifetime_hours", 8760);
+    let did_publish_interval_secs =
+        get_u64_setting(&config, "did_document_publishing_interval_secs", 300);
 
     let doc_cbor = our_document
         .encode()
@@ -234,9 +237,10 @@ async fn main() -> Result<()> {
         .context("kubo RPC is not reachable")?;
 
     if root_cid.is_none() {
-        root_cid = ipfs::resolve_runtime_root_cid_by_ipns_id(&config.kubo_rpc_url, &runtime_ipns_id)
-            .await
-            .context("failed to resolve runtime root CID from IPNS")?;
+        root_cid =
+            ipfs::resolve_runtime_root_cid_by_ipns_id(&config.kubo_rpc_url, &runtime_ipns_id)
+                .await
+                .context("failed to resolve runtime root CID from IPNS")?;
         if root_cid.is_none() {
             return Err(anyhow!(
                 "no runtime root CID found in IPNS; provide --root-cid <cid>"
@@ -274,22 +278,38 @@ async fn main() -> Result<()> {
         info!(count = %count, "Entity plugins loaded");
     }
 
-    // ── Load root plugin (/ma/root/0.0.1) ─────────────────────────────────────
-    let root_plugin: Option<Arc<plugin::RootPlugin>> =
-        if let Some(ref rc) = root_cid {
-            match bootstrap::load_root_plugin(rc, &config.kubo_rpc_url).await {
-                Some(rp) => {
-                    info!("Root plugin (/ma/root/0.0.1) loaded");
-                    Some(Arc::new(rp))
+    // ── Load named ACLs into cache ─────────────────────────────────────────────
+    let acl_cache = acl::new_acl_cache();
+    if let Some(ref rc) = root_cid {
+        let manifest: Result<entity::RuntimeManifest, _> =
+            kubo::dag_get(&config.kubo_rpc_url, rc).await;
+        match manifest {
+            Ok(m) => {
+                let mut entries = Vec::new();
+                for (ns_name, ns_node) in &m.namespaces {
+                    for (acl_name, link) in &ns_node.acl {
+                        let cache_key = format!("{ns_name}.acl.{acl_name}");
+                        match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
+                            Ok(acl_map) => {
+                                info!(key = %cache_key, cid = %link.cid, "Named ACL loaded into cache");
+                                entries.push((cache_key, acl_map));
+                            }
+                            Err(e) => {
+                                warn!(key = %cache_key, cid = %link.cid, error = %e, "failed to load named ACL into cache at startup");
+                            }
+                        }
+                    }
                 }
-                None => {
-                    info!("No root plugin in manifest; using built-in #root handlers");
-                    None
+                let mut cache = acl_cache.write().await;
+                for (key, acl_map) in entries {
+                    cache.insert(key, acl_map);
                 }
             }
-        } else {
-            None
-        };
+            Err(e) => {
+                warn!(error = %e, "failed to load manifest for ACL cache population");
+            }
+        }
+    }
 
     // ── Signing key ────────────────────────────────────────────────────────────
     let signing_key = secrets
@@ -318,8 +338,7 @@ async fn main() -> Result<()> {
     let refresh_bundle_path = config.effective_secret_bundle()?;
     let refresh_passphrase = config
         .secret_bundle_passphrase
-        .as_ref()
-        .cloned()
+        .clone()
         .ok_or_else(|| anyhow!("secret_bundle_passphrase is required for periodic DID publish"))?;
     let refresh_stats = stats.clone();
     tokio::spawn(async move {
@@ -343,7 +362,9 @@ async fn main() -> Result<()> {
                     continue;
                 }
             };
-            let ma = refresh_ma_base.clone().extra("runtime", Ipld::Link(runtime_cid));
+            let ma = refresh_ma_base
+                .clone()
+                .extra("runtime", Ipld::Link(runtime_cid));
             let document = match bundle.build_document(ma) {
                 Ok(doc) => doc,
                 Err(err) => {
@@ -370,8 +391,12 @@ async fn main() -> Result<()> {
             )
             .await;
             match publish {
-                Ok(Ok(())) => info!(runtime_cid = %latest_root_cid, "periodic DID publish succeeded"),
-                Ok(Err(err)) => error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "periodic DID publish failed"),
+                Ok(Ok(())) => {
+                    info!(runtime_cid = %latest_root_cid, "periodic DID publish succeeded");
+                }
+                Ok(Err(err)) => {
+                    error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "periodic DID publish failed");
+                }
                 Err(_) => error!(runtime_cid = %latest_root_cid, "periodic DID publish timed out"),
             }
 
@@ -386,9 +411,15 @@ async fn main() -> Result<()> {
             )
             .await
             {
-                Ok(Ok(_)) => info!(runtime_cid = %latest_root_cid, "periodic runtime_ipns publish succeeded"),
-                Ok(Err(err)) => error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "periodic runtime_ipns publish failed"),
-                Err(_) => error!(runtime_cid = %latest_root_cid, "periodic runtime_ipns publish timed out"),
+                Ok(Ok(_)) => {
+                    info!(runtime_cid = %latest_root_cid, "periodic runtime_ipns publish succeeded");
+                }
+                Ok(Err(err)) => {
+                    error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "periodic runtime_ipns publish failed");
+                }
+                Err(_) => {
+                    error!(runtime_cid = %latest_root_cid, "periodic runtime_ipns publish timed out");
+                }
             }
         }
     });
@@ -437,7 +468,7 @@ async fn main() -> Result<()> {
                             kubo_rpc_url: &config.kubo_rpc_url,
                             entity_registry: entity_registry.clone(),
                             stats: stats.clone(),
-                            root_plugin: root_plugin.clone(),
+                            acl_cache: acl_cache.clone(),
                         },
                     )
                     .await
@@ -567,29 +598,54 @@ fn get_u64_setting(config: &Config, key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-fn runtime_manifest_config(config: &Config) -> std::collections::BTreeMap<String, serde_json::Value> {
+fn runtime_manifest_config(
+    config: &Config,
+) -> std::collections::BTreeMap<String, serde_json::Value> {
     let mut out = std::collections::BTreeMap::new();
 
-    out.insert("slug".to_string(), serde_json::Value::String(MA_DEFAULT_SLUG.to_string()));
+    out.insert(
+        "slug".to_string(),
+        serde_json::Value::String(MA_DEFAULT_SLUG.to_string()),
+    );
     out.insert(
         "did_resolver_positive_ttl_secs".to_string(),
-        serde_json::Value::from(get_u64_setting(config, "did_resolver_positive_ttl_secs", 60)),
+        serde_json::Value::from(get_u64_setting(
+            config,
+            "did_resolver_positive_ttl_secs",
+            60,
+        )),
     );
     out.insert(
         "did_resolver_negative_ttl_secs".to_string(),
-        serde_json::Value::from(get_u64_setting(config, "did_resolver_negative_ttl_secs", 10)),
+        serde_json::Value::from(get_u64_setting(
+            config,
+            "did_resolver_negative_ttl_secs",
+            10,
+        )),
     );
     out.insert(
         "did_document_publishing_interval_secs".to_string(),
-        serde_json::Value::from(get_u64_setting(config, "did_document_publishing_interval_secs", 300)),
+        serde_json::Value::from(get_u64_setting(
+            config,
+            "did_document_publishing_interval_secs",
+            300,
+        )),
     );
     out.insert(
         "did_document_publishing_timeout_secs".to_string(),
-        serde_json::Value::from(get_u64_setting(config, "did_document_publishing_timeout_secs", 120)),
+        serde_json::Value::from(get_u64_setting(
+            config,
+            "did_document_publishing_timeout_secs",
+            120,
+        )),
     );
     out.insert(
         "did_document_publishing_lifetime_hours".to_string(),
-        serde_json::Value::from(get_u64_setting(config, "did_document_publishing_lifetime_hours", 8760)),
+        serde_json::Value::from(get_u64_setting(
+            config,
+            "did_document_publishing_lifetime_hours",
+            8760,
+        )),
     );
     out.insert(
         "ipns_publish_lifetime_hours".to_string(),
@@ -660,6 +716,5 @@ fn status_cors_allowed_origins(config: &Config) -> Vec<String> {
         }
     }
 
-    DEFAULTS.iter().map(|s| s.to_string()).collect()
+    DEFAULTS.iter().map(ToString::to_string).collect()
 }
-

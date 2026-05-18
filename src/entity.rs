@@ -67,10 +67,17 @@ impl PluginKind {
     /// (e.g. `/ma/stateful/python/0.0.1`).
     pub fn from_kind_str(s: &str) -> Self {
         if s.contains("stateful") {
-            PluginKind::Stateful
+            Self::Stateful
         } else {
-            PluginKind::Stateless
+            Self::Stateless
         }
+    }
+
+    /// Derive whether a plugin requires WASI system-call support from the kind
+    /// protocol string.  Python-compiled and explicit WASI plugins return `true`;
+    /// native Rust extism plugins return `false`.
+    pub fn wasi_from_kind_str(s: &str) -> bool {
+        s.contains("python") || s.contains("wasi")
     }
 }
 
@@ -80,8 +87,6 @@ pub struct PluginCtx {
     /// Full DID-URL of this entity, e.g. `did:ma:<runtime>#fortune`.
     #[serde(rename = "self")]
     pub self_did: String,
-    /// DID of the entity's owner.
-    pub owner: String,
 }
 
 /// Input passed (CBOR-encoded) to both `handle_cast` (stateless) and
@@ -143,54 +148,120 @@ pub enum KindRef {
 }
 
 impl KindRef {
-    pub fn link(&self) -> &IpldLink {
+    #[allow(dead_code)]
+    pub const fn link(&self) -> &IpldLink {
         match self {
             Self::Link(link) | Self::Legacy { link } => link,
         }
     }
 }
 
+/// A namespace within the runtime manifest. Owned by a single DID.
+///
+/// ## Key conventions
+///
+/// | Key pattern | Meaning |
+/// |-------------|---------|
+/// | `#name` | Entity (in manifest `entities` map, not in `extra`) |
+/// | `acl` | Named ACL sub-tree — flat, cached in memory |
+/// | anything else | IPLD link — no content validation |
+///
+/// Blob values are stored as `{"/": "bafy…"}` in `extra`.  Nested structure
+/// is supported lazily: `alice.prosjekt.mappe.ting` resolves `extra["prosjekt"]`
+/// to a root CID and traverses the remaining path via `ipfs dag resolve`.
+/// Nested structures are managed externally; the namespace only stores the
+/// root link.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NamespaceNode {
+    /// Owner DID — only this principal (or the runtime itself) may modify
+    /// the namespace.
+    #[serde(default)]
+    pub did: String,
+    /// Optional human-readable name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Optional description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Named ACL references. Each value is an IPLD link to an `AclMap` doc.
+    /// Traversable: `ipfs dag get …/<ns>/acl/<name>`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub acl: HashMap<String, IpldLink>,
+    /// Free-form IPLD sub-trees for organisational use.
+    /// Values must be IPLD-compatible JSON; CID links are automatically
+    /// followed by `ipfs dag get`.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
 /// IPLD node representing a single entity.
+///
+/// Ownership is implicit: the namespace prefix of the entity name determines
+/// the owner (e.g. `alice.#fortune` is owned by whoever owns the `alice`
+/// namespace).  WASI support is derived from the `kind` protocol string at
+/// plugin-load time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityNode {
-    pub name: String,
     pub kind: String,
     /// IPLD link to the Wasm plugin bytes stored on IPFS.
     pub behavior: IpldLink,
-    /// IPLD link to persisted state (optional, encrypted with the runtime key).
-    /// Omitted when absent, which is the expected shape for stateless entities.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<IpldLink>,
-    pub owner: String,
-    pub acl: Vec<String>,
-    /// Whether this plugin requires WASI system-call support.
-    /// Inherited from the kind definition at bootstrap time.
+    /// Entity-level ACL — reference path to a named ACL in the namespace tree
+    /// (e.g. `"alice.acl.open"`). Resolved at check time by fetching from
+    /// the in-memory [`AclCache`]. Empty string means deny-all (fail-closed).
     #[serde(default)]
-    pub wasi: bool,
+    pub acl: String,
+    /// IPLD link to persisted state (optional).
+    /// Omitted when absent, which is the expected shape for stateless entities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<IpldLink>,
 }
 
 /// Root IPLD node for this runtime.
-/// Stored av CID i `config.yaml` som `bootstrap_cid` (tidligere `root_cid`)
-/// one-time fallback) and published into the DID document under `ma.runtime`.
+/// Stored as CID in `config.yaml` and published into the DID document under
+/// `ma.runtime`. Namespace data (`groups`, `acls`) lives in [`NamespaceNode`]
+/// values addressed by namespace handle.
+///
+/// Path traversal example:
+/// `ipfs dag get /ipns/<did>/runtime/<handle>/groups/<name>` returns the
+/// group document directly (IPLD follows `{"/": "bafy…"}` links).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeManifest {
-    pub owner: String,
+    /// Transport-level ACL — IPLD link to an ACL document.
+    /// Loaded once at startup. When absent, falls back to the YAML-based
+    /// ACL supplied via `--acl-file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acl: Option<IpldLink>,
+    /// Runtime protocol identifier (e.g. `"/ma/runtime/0.1.0"`).
+    #[serde(default)]
+    pub protocol: String,
+    /// Global kinds registry. Shared across all namespaces.
     #[serde(default)]
     pub kinds: KindTree,
+    /// Global entity registry — fragment → IPLD link to [`EntityNode`].
     pub entities: HashMap<String, IpldLink>,
     #[serde(default)]
     pub locales: HashMap<String, IpldLink>,
     #[serde(default)]
     pub config: BTreeMap<String, serde_json::Value>,
+    /// Namespace nodes keyed by handle (e.g. `"owner"`, `"alice"`).
+    /// Serialised flat alongside the typed fields; IPFS path segments follow
+    /// the handle: `…/runtime/<handle>/groups/<name>`.
+    ///
+    /// Reserved handles that may not be used as namespace names:
+    /// `acl`, `protocol`, `kinds`, `entities`, `locales`, `config`.
+    #[serde(flatten)]
+    pub namespaces: HashMap<String, NamespaceNode>,
 }
 
 impl RuntimeManifest {
+    #[allow(dead_code)]
     pub fn kind_link(&self, protocol: &str) -> Option<&IpldLink> {
         let (_, family, implementation, _) = split_kind_protocol(protocol)?;
         Some(self.kinds.get(family)?.get(implementation)?.link())
     }
 }
 
+#[allow(dead_code)]
 fn split_kind_protocol(protocol: &str) -> Option<(&str, &str, &str, &str)> {
     // Expected: /ma/<family>/<implementation>/<version>
     let parts: Vec<&str> = protocol.trim_matches('/').split('/').collect();
@@ -219,52 +290,75 @@ pub struct SendEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::{EntityNode, IpldLink};
+    use super::{EntityNode, IpldLink, PluginKind};
 
     #[test]
     fn serializing_entity_without_state_omits_state_field() {
         let node = EntityNode {
-            name: "fortune".to_string(),
             kind: "/ma/stateless/python/0.0.1".to_string(),
             behavior: IpldLink::new("bafybehavior"),
+            acl: String::new(),
             state: None,
-            owner: "did:ma:k51qzi5uqu5example".to_string(),
-            acl: vec!["*".to_string()],
-            wasi: true,
         };
 
         let value = serde_json::to_value(&node).expect("serialize entity node");
-        assert!(value.get("state").is_none(), "state must be omitted when None");
+        assert!(
+            value.get("state").is_none(),
+            "state must be omitted when None"
+        );
+    }
+
+    #[test]
+    fn serializing_entity_always_includes_acl_field() {
+        let node = EntityNode {
+            kind: "/ma/stateless/python/0.0.1".to_string(),
+            behavior: IpldLink::new("bafybehavior"),
+            acl: String::new(),
+            state: None,
+        };
+        let value = serde_json::to_value(&node).expect("serialize entity node");
+        assert!(
+            value.get("acl").is_some(),
+            "acl must always be present in serialized form"
+        );
     }
 
     #[test]
     fn deserializing_entity_accepts_missing_state_field() {
         let raw = r#"{
-            "name": "fortune",
             "kind": "/ma/stateless/python/0.0.1",
             "behavior": {"/": "bafybehavior"},
-            "owner": "did:ma:k51qzi5uqu5example",
-            "acl": ["*"],
-            "wasi": true
+            "acl": ""
         }"#;
 
         let node: EntityNode = serde_json::from_str(raw).expect("deserialize entity node");
-        assert!(node.state.is_none(), "missing state should deserialize as None");
+        assert!(
+            node.state.is_none(),
+            "missing state should deserialize as None"
+        );
     }
 
     #[test]
     fn deserializing_entity_accepts_null_state_field() {
         let raw = r#"{
-            "name": "fortune",
             "kind": "/ma/stateless/python/0.0.1",
             "behavior": {"/": "bafybehavior"},
-            "state": null,
-            "owner": "did:ma:k51qzi5uqu5example",
-            "acl": ["*"],
-            "wasi": true
+            "acl": "",
+            "state": null
         }"#;
 
         let node: EntityNode = serde_json::from_str(raw).expect("deserialize entity node");
-        assert!(node.state.is_none(), "null state should deserialize as None");
+        assert!(
+            node.state.is_none(),
+            "null state should deserialize as None"
+        );
+    }
+
+    #[test]
+    fn wasi_derived_from_python_kind_string() {
+        assert!(PluginKind::wasi_from_kind_str("/ma/stateless/python/0.0.1"));
+        assert!(PluginKind::wasi_from_kind_str("/ma/stateful/wasi/0.0.1"));
+        assert!(!PluginKind::wasi_from_kind_str("/ma/stateless/rust/0.0.1"));
+        assert!(!PluginKind::wasi_from_kind_str("/ma/stateful/rust/0.0.1"));
     }
 }

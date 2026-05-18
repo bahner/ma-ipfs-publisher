@@ -37,9 +37,8 @@ struct LocalMessage {
 #[derive(Debug, Deserialize)]
 struct PluginCtx {
     #[allow(dead_code)]
+    #[serde(rename = "self")]
     self_did: String,
-    #[allow(dead_code)]
-    owner: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,82 +110,17 @@ fn cbor_encode_text(s: &str) -> FnResult<Vec<u8>> {
     Ok(buf)
 }
 
-/// Encode a `serde::Serialize` value to CBOR via JSON round-trip.
+/// Encode a `serde::Serialize` value to CBOR.
 fn cbor_encode_value<T: serde::Serialize>(value: &T) -> FnResult<Vec<u8>> {
-    let json = serde_json::to_value(value)
-        .map_err(|e| anyhow::anyhow!("json serialize: {e}"))?;
-    let cbor = json_to_cbor(json)
-        .map_err(|e| anyhow::anyhow!("json->cbor: {e}"))?;
     let mut buf = Vec::new();
-    ciborium::ser::into_writer(&cbor, &mut buf)
+    ciborium::ser::into_writer(value, &mut buf)
         .map_err(|e| anyhow::anyhow!("cbor encode: {e}"))?;
     Ok(buf)
 }
 
-/// Decode CBOR bytes to a `serde::DeserializeOwned` type via JSON round-trip.
+/// Decode CBOR bytes to a `serde::DeserializeOwned` type.
 fn cbor_decode<T: for<'de> serde::Deserialize<'de>>(bytes: &[u8]) -> Result<T, String> {
-    let cbor: ciborium::Value =
-        ciborium::de::from_reader(bytes).map_err(|e| format!("CBOR decode: {e}"))?;
-    let json = cbor_to_json(cbor).map_err(|e| format!("CBOR->JSON: {e}"))?;
-    serde_json::from_value(json).map_err(|e| format!("JSON deserialize: {e}"))
-}
-
-fn cbor_to_json(v: ciborium::Value) -> Result<serde_json::Value, String> {
-    Ok(match v {
-        ciborium::Value::Null => serde_json::Value::Null,
-        ciborium::Value::Bool(b) => serde_json::Value::Bool(b),
-        ciborium::Value::Integer(i) => {
-            let n: i64 = i.try_into().map_err(|_| "CBOR integer overflow".to_string())?;
-            serde_json::Value::Number(n.into())
-        }
-        ciborium::Value::Float(f) => serde_json::Value::Number(
-            serde_json::Number::from_f64(f).ok_or_else(|| "non-finite float".to_string())?,
-        ),
-        ciborium::Value::Text(s) => serde_json::Value::String(s),
-        ciborium::Value::Bytes(b) => serde_json::Value::Array(
-            b.into_iter()
-                .map(|byte| serde_json::Value::Number(byte.into()))
-                .collect(),
-        ),
-        ciborium::Value::Array(arr) => serde_json::Value::Array(
-            arr.into_iter().map(cbor_to_json).collect::<Result<Vec<_>, _>>()?,
-        ),
-        ciborium::Value::Map(map) => {
-            let mut obj = serde_json::Map::new();
-            for (k, v) in map {
-                let key =
-                    if let ciborium::Value::Text(s) = k { s } else { format!("{k:?}") };
-                obj.insert(key, cbor_to_json(v)?);
-            }
-            serde_json::Value::Object(obj)
-        }
-        _ => serde_json::Value::Null,
-    })
-}
-
-fn json_to_cbor(v: serde_json::Value) -> Result<ciborium::Value, String> {
-    Ok(match v {
-        serde_json::Value::Null => ciborium::Value::Null,
-        serde_json::Value::Bool(b) => ciborium::Value::Bool(b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                ciborium::Value::Integer(ciborium::value::Integer::from(i))
-            } else if let Some(f) = n.as_f64() {
-                ciborium::Value::Float(f)
-            } else {
-                return Err(format!("unconvertible number {n}"));
-            }
-        }
-        serde_json::Value::String(s) => ciborium::Value::Text(s),
-        serde_json::Value::Array(arr) => ciborium::Value::Array(
-            arr.into_iter().map(json_to_cbor).collect::<Result<Vec<_>, _>>()?,
-        ),
-        serde_json::Value::Object(map) => ciborium::Value::Map(
-            map.into_iter()
-                .map(|(k, v)| Ok((ciborium::Value::Text(k), json_to_cbor(v)?)))
-                .collect::<Result<Vec<_>, String>>()?,
-        ),
-    })
+    ciborium::de::from_reader(bytes).map_err(|e| format!("CBOR decode: {e}"))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

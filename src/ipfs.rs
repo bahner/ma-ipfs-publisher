@@ -1,17 +1,17 @@
 use anyhow::{anyhow, Context, Result};
 use ma_core::ipfs::IpfsDidPublisher;
+use ma_core::ipfs::MA_IPNS_ALIAS_HASH_PREFIX;
 use ma_core::ipfs_add;
 use ma_core::{
-    ipns_from_secret, validate_ipfs_request, Acl, Did, Document, Inbox, IpfsGatewayResolver,
-    MESSAGE_TYPE_RPC_REPLY, ReplayGuard, SigningKey, ValidatedIpfsRequest,
+    ipns_from_secret, validate_ipfs_request, Did, Document, Inbox, IpfsGatewayResolver,
+    ReplayGuard, SigningKey, ValidatedIpfsRequest, MESSAGE_TYPE_RPC_REPLY,
 };
-use ma_core::ipfs::MA_IPNS_ALIAS_HASH_PREFIX;
 use reqwest::multipart;
 use serde::Deserialize;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
-use crate::acl::acl_check;
+use crate::acl::{acl_check, AclMap, PERM_W};
 use crate::i18n;
 use crate::rpc::RPC_PROTOCOL_ID;
 
@@ -62,10 +62,13 @@ pub async fn resolve_runtime_root_cid_by_ipns_id(
     kubo_url: &str,
     ipns_id: &str,
 ) -> Result<Option<String>> {
-    let key_id = list_keys(kubo_url)
-        .await?
-        .into_iter()
-        .find_map(|(_, id)| if id == ipns_id { Some(id) } else { None });
+    let key_id = list_keys(kubo_url).await?.into_iter().find_map(|(_, id)| {
+        if id == ipns_id {
+            Some(id)
+        } else {
+            None
+        }
+    });
 
     let Some(key_id) = key_id else {
         return Ok(None);
@@ -85,8 +88,8 @@ pub async fn publish_runtime_root_cid(
     root_cid: &str,
     publish_lifetime_hours: u64,
 ) -> Result<String> {
-    let runtime_ipns_id = ipns_from_secret(*runtime_ipns_key)
-        .context("failed to derive runtime IPNS id")?;
+    let runtime_ipns_id =
+        ipns_from_secret(*runtime_ipns_key).context("failed to derive runtime IPNS id")?;
     let hash = blake3::hash(runtime_ipns_id.as_bytes());
     let key_name = format!("{}{}", MA_IPNS_ALIAS_HASH_PREFIX, &hash.to_hex()[..16]);
     ensure_kubo_ipns_key(kubo_url, &key_name, &runtime_ipns_id, runtime_ipns_key).await?;
@@ -149,7 +152,6 @@ struct KeyImportResponse {
     id_lower: String,
 }
 
-
 async fn dag_put_cbor(kubo_url: &str, data: &[u8]) -> Result<String> {
     let base = kubo_url.trim_end_matches('/');
     let url = format!("{base}/api/v0/dag/put");
@@ -190,9 +192,12 @@ async fn name_publish(
 ) -> Result<String> {
     let base = kubo_url.trim_end_matches('/');
     let url = format!("{base}/api/v0/name/publish");
-    let arg = format!("/ipfs/{}", cid.trim_start_matches('/').trim_start_matches("ipfs/"));
+    let arg = format!(
+        "/ipfs/{}",
+        cid.trim_start_matches('/').trim_start_matches("ipfs/")
+    );
 
-    let lifetime = format!("{}h", publish_lifetime_hours);
+    let lifetime = format!("{publish_lifetime_hours}h");
     let body = reqwest::Client::new()
         .post(url)
         .query(&[
@@ -211,10 +216,10 @@ async fn name_publish(
 
     let parsed: NamePublishResponse = serde_json::from_str(&body)
         .map_err(|e| anyhow!("failed parsing name/publish response: {e} body={body}"))?;
-    let value = if !parsed.value_upper.is_empty() {
-        parsed.value_upper
-    } else {
+    let value = if parsed.value_upper.is_empty() {
         parsed.value_lower
+    } else {
+        parsed.value_upper
     };
     if value.is_empty() {
         return Err(anyhow!("missing value in name/publish response: {body}"));
@@ -238,10 +243,10 @@ async fn resolve_ipns_path(kubo_url: &str, key_id: &str) -> Result<Option<String
 
     let parsed: NameResolveResponse = serde_json::from_str(&body)
         .map_err(|e| anyhow!("failed parsing name/resolve response: {e} body={body}"))?;
-    let path = if !parsed.path_upper.is_empty() {
-        parsed.path_upper
-    } else {
+    let path = if parsed.path_upper.is_empty() {
         parsed.path_lower
+    } else {
+        parsed.path_upper
     };
     if path.is_empty() {
         return Ok(None);
@@ -272,10 +277,7 @@ async fn ensure_kubo_ipns_key(
     if let Some((_, id)) = existing {
         if id.trim() != expected_ipns_id {
             return Err(anyhow!(
-                "existing key '{}' has IPNS id '{}' but expected '{}'",
-                key_name,
-                id,
-                expected_ipns_id
+                "existing key '{key_name}' has IPNS id '{id}' but expected '{expected_ipns_id}'"
             ));
         }
         return Ok(());
@@ -293,9 +295,7 @@ async fn ensure_kubo_ipns_key(
     let imported_id = import_key(kubo_url, key_name, protobuf_key).await?;
     if imported_id.trim() != expected_ipns_id {
         return Err(anyhow!(
-            "imported key IPNS id '{}' does not match expected '{}'",
-            imported_id,
-            expected_ipns_id
+            "imported key IPNS id '{imported_id}' does not match expected '{expected_ipns_id}'"
         ));
     }
     Ok(())
@@ -320,15 +320,15 @@ async fn list_keys(kubo_url: &str) -> Result<Vec<(String, String)>> {
         .keys
         .into_iter()
         .filter_map(|k| {
-            let name = if !k.name.trim().is_empty() {
-                k.name.trim().to_string()
-            } else {
+            let name = if k.name.trim().is_empty() {
                 k.name_lower.trim().to_string()
-            };
-            let id = if !k.id.trim().is_empty() {
-                k.id.trim().to_string()
             } else {
+                k.name.trim().to_string()
+            };
+            let id = if k.id.trim().is_empty() {
                 k.id_lower.trim().to_string()
+            } else {
+                k.id.trim().to_string()
             };
             if name.is_empty() || id.is_empty() {
                 None
@@ -364,10 +364,10 @@ async fn import_key(kubo_url: &str, key_name: &str, key_bytes: Vec<u8>) -> Resul
 
     let parsed: KeyImportResponse = serde_json::from_str(&body)
         .map_err(|e| anyhow!("failed parsing key/import response: {e} body={body}"))?;
-    let id = if !parsed.id_upper.trim().is_empty() {
-        parsed.id_upper
-    } else {
+    let id = if parsed.id_upper.trim().is_empty() {
         parsed.id_lower
+    } else {
+        parsed.id_upper
     };
     if id.trim().is_empty() {
         return Err(anyhow!("missing id in key/import response: {body}"));
@@ -377,11 +377,11 @@ async fn import_key(kubo_url: &str, key_name: &str, key_bytes: Vec<u8>) -> Resul
 
 pub async fn handle_ipfs_message(
     message: &ma_core::Message,
-    acl: &Acl,
+    acl: &AclMap,
     ctx: &IpfsHandlerCtx<'_>,
     replay_guard: &mut ReplayGuard,
 ) -> Result<()> {
-    acl_check(acl, &message.from)?;
+    acl_check(acl, &message.from, PERM_W)?;
 
     let headers = message.headers();
     replay_guard
@@ -419,7 +419,7 @@ pub async fn handle_ipfs_message(
                 &rpc_did_url,
                 MESSAGE_TYPE_RPC_REPLY,
                 "application/cbor",
-                reply_bytes,
+                &reply_bytes,
                 ctx.signing_key,
             )
             .context("failed to build ipfs-publish reply")?;
@@ -456,9 +456,22 @@ async fn handle_ipfs_store(
 ) -> Result<()> {
     info!(from = %orig_message.from, id = %orig_message.id, "{}", i18n::t("ipfs-store-request-received"));
 
-    let cid = ipfs_add(ctx.kubo_rpc_url, v.content.clone())
-        .await
-        .context("ipfs add failed")?;
+    // DAG-CBOR content: decode back to a value and use the dag-json input path
+    // in Kubo (store-codec=dag-cbor).  Sending raw CBOR bytes with
+    // input-codec=dag-cbor produces a raw block (bafkrei…) instead of a
+    // proper dag-cbor node (bafy…), so we go through dag-json which is the
+    // reliable path.
+    let cid = if v.content_type == "application/vnd.ipld.dag-cbor" {
+        let val: serde_json::Value = ciborium::de::from_reader(v.content.as_slice())
+            .context("failed to decode incoming DAG-CBOR")?;
+        crate::kubo::dag_put(ctx.kubo_rpc_url, &val)
+            .await
+            .context("dag put failed")?
+    } else {
+        ipfs_add(ctx.kubo_rpc_url, v.content.clone())
+            .await
+            .context("ipfs add failed")?
+    };
 
     info!(cid = %cid, from = %orig_message.from, "{}", i18n::t("ipfs-stored"));
 
@@ -479,7 +492,7 @@ async fn handle_ipfs_store(
         &rpc_did_url,
         MESSAGE_TYPE_RPC_REPLY,
         "application/cbor",
-        reply_bytes,
+        &reply_bytes,
         ctx.signing_key,
     )
     .context("failed to build ipfs-store reply")?;

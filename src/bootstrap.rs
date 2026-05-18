@@ -18,7 +18,7 @@ use ma_core::ipfs_add;
 use serde::Deserialize;
 
 use crate::entity::{
-    EntityNode, IpldLink, KindNode, KindRef, KindTree, PluginKind, RuntimeManifest,
+    EntityNode, IpldLink, KindNode, KindRef, KindTree, NamespaceNode, PluginKind, RuntimeManifest,
 };
 use crate::kubo;
 use crate::plugin;
@@ -50,15 +50,16 @@ pub struct BootstrapKind {
     pub wasi: bool,
 }
 
-pub type BootstrapKindsDict =
-    BTreeMap<String, BTreeMap<String, BootstrapKind>>;
+pub type BootstrapKindsDict = BTreeMap<String, BTreeMap<String, BootstrapKind>>;
 
 #[derive(Debug, Deserialize)]
 pub struct BootstrapEntity {
     pub kind: String,
     pub behavior_cid: String,
-    pub acl: Vec<String>,
-    pub owner: Option<String>,
+    /// Reference path to a named ACL in the namespace tree
+    /// (e.g. `"owner.acl.open"`). Empty string means deny-all.
+    #[serde(default)]
+    pub acl: String,
 }
 
 // ── Result type ───────────────────────────────────────────────────────────────
@@ -84,12 +85,20 @@ pub async fn run_bootstrap(
     kubo_url: &str,
     locales_dir: &Path,
     runtime_config: BTreeMap<String, serde_json::Value>,
+    old_root_cid: Option<&str>,
 ) -> Result<BootstrapResult> {
     let raw = std::fs::read_to_string(yaml_path)
         .with_context(|| format!("reading bootstrap file: {}", yaml_path.display()))?;
     let yaml: BootstrapYaml = serde_yaml::from_str(&raw).context("parsing bootstrap YAML")?;
 
-    build_manifest(&yaml.runtime, kubo_url, locales_dir, runtime_config).await
+    build_manifest(
+        &yaml.runtime,
+        kubo_url,
+        locales_dir,
+        runtime_config,
+        old_root_cid,
+    )
+    .await
 }
 
 /// Build the full IPLD manifest and publish to Kubo. Returns root CID.
@@ -98,6 +107,7 @@ pub async fn build_manifest(
     kubo_url: &str,
     locales_dir: &Path,
     runtime_config: BTreeMap<String, serde_json::Value>,
+    old_root_cid: Option<&str>,
 ) -> Result<BootstrapResult> {
     let mut kinds_flat: Vec<BootstrapKind> = Vec::new();
 
@@ -118,30 +128,30 @@ pub async fn build_manifest(
 
             kinds_flat.push(bk.clone());
 
-            let node = KindNode { protocol: bk.protocol.clone(), api: bk.api.clone(), host_functions: bk.host_functions.clone(), wasi: bk.wasi };
+            let node = KindNode {
+                protocol: bk.protocol.clone(),
+                api: bk.api.clone(),
+                host_functions: bk.host_functions.clone(),
+                wasi: bk.wasi,
+            };
             let cid = kubo::dag_put(kubo_url, &node)
                 .await
                 .with_context(|| format!("dag_put kind {}", bk.protocol))?;
             tracing::info!(protocol = %bk.protocol, cid = %cid, "Published kind node");
             let link = IpldLink::new(cid);
-            insert_kind_entry(
-                &mut kinds,
-                family,
-                implementation,
-                KindRef::Link(link),
-            );
+            insert_kind_entry(&mut kinds, family, implementation, KindRef::Link(link));
         }
     }
 
     // 2. Publish entity nodes.
-    let wasi_map: std::collections::HashMap<String, bool> =
-        kinds_flat.iter().map(|k| (k.protocol.clone(), k.wasi)).collect();
+    let known_kinds: std::collections::HashSet<String> =
+        kinds_flat.iter().map(|k| k.protocol.clone()).collect();
     let mut entities_map: HashMap<String, IpldLink> = HashMap::new();
     for (name, be) in &cfg.entities {
-        let wasi = *wasi_map
-            .get(&be.kind)
-            .with_context(|| format!("entity {name} references unknown kind {}", be.kind))?;
-        let entity = build_bootstrap_entity_node(name, be, &cfg.owner, wasi);
+        if !known_kinds.contains(&be.kind) {
+            return Err(anyhow!("entity {name} references unknown kind {}", be.kind));
+        }
+        let entity = build_bootstrap_entity_node(be);
         let cid = kubo::dag_put(kubo_url, &entity)
             .await
             .with_context(|| format!("dag_put entity {name}"))?;
@@ -155,25 +165,45 @@ pub async fn build_manifest(
         .await
         .context("dag_put locales map")?;
     let root = RuntimeManifest {
-        owner: cfg.owner.clone(),
+        acl: None,
+        protocol: "/ma/runtime/0.1.0".to_string(),
         kinds,
         entities: entities_map,
         locales,
         config: runtime_config,
+        namespaces: {
+            let mut ns = std::collections::HashMap::new();
+            ns.insert(
+                "owner".to_string(),
+                NamespaceNode {
+                    did: cfg.owner.clone(),
+                    ..Default::default()
+                },
+            );
+            ns
+        },
     };
     let root_cid = kubo::dag_put(kubo_url, &root)
         .await
         .context("dag_put root manifest")?;
     tracing::info!(root_cid = %root_cid, "Published runtime root manifest");
+
+    // Swap pins atomically: move the recursive pin from the old root to the
+    // new one so no intermediate state exists with an unpinned manifest.
+    if let Some(old) = old_root_cid {
+        if let Err(e) = kubo::pin_update(kubo_url, old, &root_cid).await {
+            tracing::warn!(old = %old, new = %root_cid, error = %e, "pin/update failed after bootstrap");
+        }
+    } else {
+        kubo::pin_add(kubo_url, &root_cid)
+            .await
+            .context("pinning new root manifest")?;
+    }
+
     Ok(BootstrapResult { root_cid })
 }
 
-fn insert_kind_entry(
-    tree: &mut KindTree,
-    family: &str,
-    implementation: &str,
-    entry: KindRef,
-) {
+fn insert_kind_entry(tree: &mut KindTree, family: &str, implementation: &str, entry: KindRef) {
     tree.entry(family.to_string())
         .or_default()
         .insert(implementation.to_string(), entry);
@@ -184,27 +214,18 @@ fn parse_kind_protocol(protocol: &str) -> Result<(&str, &str, &str)> {
     if parts.len() == 4 && parts[0] == "ma" {
         Ok((parts[1], parts[2], parts[3]))
     } else {
-        Err(anyhow!("expected /ma/<family>/<implementation>/<version>, got: {protocol}"))
+        Err(anyhow!(
+            "expected /ma/<family>/<implementation>/<version>, got: {protocol}"
+        ))
     }
 }
 
-fn build_bootstrap_entity_node(
-    name: &str,
-    be: &BootstrapEntity,
-    default_owner: &str,
-    wasi: bool,
-) -> EntityNode {
+fn build_bootstrap_entity_node(be: &BootstrapEntity) -> EntityNode {
     EntityNode {
-        name: name.to_string(),
         kind: be.kind.clone(),
         behavior: IpldLink::new(&be.behavior_cid),
-        state: None,
-        owner: be
-            .owner
-            .clone()
-            .unwrap_or_else(|| default_owner.to_string()),
         acl: be.acl.clone(),
-        wasi,
+        state: None,
     }
 }
 
@@ -256,48 +277,6 @@ pub async fn load_entities(
         }
     }
     loaded
-}
-
-// ── Root plugin loading ────────────────────────────────────────────────────────
-
-/// Load the `/ma/root/0.0.1` plugin from the manifest, if present.
-///
-/// The root entity is expected in the manifest under the name `"root"` with
-/// kind `/ma/root/0.0.1`.  Returns `None` if no such entity exists or loading
-/// fails (non-fatal).
-pub async fn load_root_plugin(
-    root_cid: &str,
-    kubo_url: &str,
-) -> Option<plugin::RootPlugin> {
-    let manifest: RuntimeManifest = match kubo::dag_get(kubo_url, root_cid).await {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::warn!("load_root_plugin: manifest fetch failed: {e}");
-            return None;
-        }
-    };
-
-    let link = manifest.entities.get("root")?;
-    let node: EntityNode = match kubo::dag_get(kubo_url, &link.cid).await {
-        Ok(n) => n,
-        Err(e) => {
-            tracing::warn!(cid = %link.cid, "load_root_plugin: entity node fetch failed: {e}");
-            return None;
-        }
-    };
-
-    if node.kind != "/ma/root/0.0.1" {
-        tracing::warn!(kind = %node.kind, "load_root_plugin: 'root' entity is not /ma/root/0.0.1; skipping");
-        return None;
-    }
-
-    match plugin::RootPlugin::load(&node, kubo_url).await {
-        Ok(rp) => Some(rp),
-        Err(e) => {
-            tracing::warn!(error = %e, "load_root_plugin: plugin load failed");
-            None
-        }
-    }
 }
 
 // ── Graceful shutdown: persist entity states ──────────────────────────────────
@@ -361,7 +340,9 @@ pub async fn save_all_entity_states(
         match kubo::dag_put(kubo_url, &entity_node).await {
             Ok(new_cid) => {
                 tracing::info!(name = %name, cid = %new_cid, "Updated entity node with new state");
-                manifest.entities.insert(name.clone(), IpldLink::new(new_cid));
+                manifest
+                    .entities
+                    .insert(name.clone(), IpldLink::new(new_cid));
             }
             Err(e) => {
                 tracing::warn!(name = %name, error = %e, "Failed to publish updated entity node");
@@ -374,6 +355,11 @@ pub async fn save_all_entity_states(
     let new_root_cid = kubo::dag_put(kubo_url, &manifest)
         .await
         .context("dag_put updated manifest")?;
+
+    // Swap pins atomically via pin/update.
+    if let Err(e) = kubo::pin_update(kubo_url, root_cid, &new_root_cid).await {
+        tracing::warn!(old = %root_cid, new = %new_root_cid, error = %e, "pin/update failed after state save");
+    }
 
     Ok(new_root_cid)
 }
@@ -437,23 +423,19 @@ mod tests {
         let be = BootstrapEntity {
             kind: "/ma/stateless/python/0.0.1".to_string(),
             behavior_cid: "bafybehavior".to_string(),
-            acl: vec!["*".to_string()],
-            owner: None,
+            acl: String::new(),
         };
 
-        let node = build_bootstrap_entity_node(
-            "fortune",
-            &be,
-            "did:ma:k51qzi5uqu5example",
-            true,
-        );
+        let node = build_bootstrap_entity_node(&be);
         let value = serde_json::to_value(&node).expect("serialize bootstrap entity");
 
-        assert_eq!(value.get("name").and_then(|v| v.as_str()), Some("fortune"));
         assert!(
             value.get("state").is_none(),
             "state must be omitted for stateless bootstrap entity"
         );
+        assert!(
+            value.get("acl").is_some(),
+            "acl must be present in serialized form"
+        );
     }
 }
-

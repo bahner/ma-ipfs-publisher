@@ -28,6 +28,13 @@ runtime:
         host_functions:
           - ma_reply     # ma_reply({msg, content}) — reply to sender; runtime handles routing
           - ma_send      # ma_send(envelope)        — full control: arbitrary to/content_type
+      ping:
+        protocol: /ma/stateless/ping/0.0.1
+        wasi: false      # Rust plugin, no WASI needed
+        api:
+          - handle_cast  # fn handle_cast(CastInput) — reply via ma_send
+        host_functions:
+          - ma_send      # ma_send(envelope) — explicit to/content_type control
     stateful:
       python:
         protocol: /ma/stateful/python/0.0.1
@@ -40,34 +47,14 @@ runtime:
           - ma_reply     # ma_reply({msg, content}) — reply to sender
           - ma_send      # ma_send(envelope)        — full control outbound
           - ma_set_state # ma_set_state(bytes)      — persist state to IPFS via runtime
-    root:
-      v0:
-        protocol: /ma/root/0.0.1
 
   # Named entities.  Each entity is a Wasm plugin stored on IPFS.
   entities:
-    # Root admin entity: handles manifest CRUD via /ma/root/0.0.1.
-    # Build the plugin first: `make -C root ipfs` and paste the CID below.
-    root:
-      kind: /ma/root/0.0.1
-      # Build with: cd root && make ipfs
-      # Then paste the resulting CID here.
-      behavior_cid: bafkreiaoqzzg6bkso5ja7kcgkn43em3om5qsizccudiymwei4htuihurpq
-      acl:
-        - "*"   # caller authz is enforced inside the plugin (owner-only for writes)
-
-    # Ping entity: handles unfragmented :ping → :pong.
-    # Build: cd ping && make ipfs
-    ping:
-      kind: /ma/stateless/0.0.1
-      behavior_cid: bafkreih2bkvufdpm2y6nhufpvul4asn2cravw23vkwripuf6tausgqonuq
-      acl:
-        - "*"   # any caller may ping
     rms:
       kind: /ma/stateless/python/0.0.1
       # Pin your Wasm file: `ipfs add fortune.wasm`
       behavior_cid: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
       acl:
-        - "*"   # allow any caller
+        "*": x   # allow any caller
       # owner defaults to runtime.owner above; override per-entity if needed
       # owner: "did:ma:OTHER_DID"

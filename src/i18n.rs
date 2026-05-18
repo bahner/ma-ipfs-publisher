@@ -37,10 +37,8 @@ const MESSAGE_IDS: &[&str] = &[
     "received-encrypted-ma-msg",
     // RPC
     "unknown-rpc-atom",
-    "ping-received",
-    "pong-sent",
     "rpc-reply-sent",
-    "pong-resolve-failed",
+    "ping-received",
     // IPFS publisher
     "did-publish-request-received",
     "document-published",
@@ -79,12 +77,7 @@ const MESSAGE_IDS: &[&str] = &[
 /// the runtime manifest.
 /// Falls back to using key names as messages if fetching fails or CIDs are
 /// not yet configured.  Safe to call only once; subsequent calls are no-ops.
-pub async fn init(
-    lang: &str,
-    kubo_url: &str,
-    locales_cid: Option<&str>,
-    root_cid: Option<&str>,
-) {
+pub async fn init(lang: &str, kubo_url: &str, locales_cid: Option<&str>, root_cid: Option<&str>) {
     let messages = load_messages(lang, kubo_url, locales_cid, root_cid).await;
 
     let _ = MESSAGES.set(messages);
@@ -140,10 +133,7 @@ fn fallback_messages() -> HashMap<String, String> {
         .collect()
 }
 
-fn pick_locale_cid<'a>(
-    lang: &str,
-    locales: &'a HashMap<String, IpldLink>,
-) -> Option<&'a str> {
+fn pick_locale_cid<'a>(lang: &str, locales: &'a HashMap<String, IpldLink>) -> Option<&'a str> {
     locales
         .get(lang)
         .or_else(|| locales.get("en"))
@@ -196,4 +186,3 @@ async fn load_messages(
         None => fallback_messages(),
     }
 }
-

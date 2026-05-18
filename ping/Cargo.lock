@@ -199,7 +199,6 @@ dependencies = [
  "ciborium",
  "extism-pdk",
  "serde",
- "serde_json",
 ]
 
 [[package]]

@@ -25,9 +25,8 @@ document to IPFS/IPNS, and then enters the main event loop.
 ```
 ego (browser WASM) ──iroh QUIC──► /ma/rpc/0.0.1
                                        │
-                                       ├─ #root          → create/list/delete entities
-                                       ├─ #<name>        → Wasm plugin dispatch
-                                       └─ (unfragmented) → ping/pong
+                                       ├─ (unfragmented) → entities/kinds/config management, ping
+                                       └─ #<name>        → Wasm plugin dispatch
                    ──iroh QUIC──► /ma/ipfs/0.0.1
                                        │
                                        └─ publish DID document to Kubo/IPNS
@@ -116,20 +115,52 @@ It does **not** rewrite the runtime manifest tree or produce a new `root_cid`.
 
 ```yaml
 runtime:
-  owner: "did:ma:<your-ipns>"
+  owner: did:ma:<your-ipns>   # DID of the operator; shown by `ma --status`
+
+  # Kinds: protocol families → implementations → metadata
   kinds:
-    entity:
-      greeter:
-        protocol: "/ma/entity/greeter/0.0.1"
-        api: ["greet", "goodbye"]
-        host_functions: ["ma_reply", "ma_send"]
-        wasi: false
+    stateless:
+      ping:
+        protocol: /ma/stateless/ping/0.0.1
+        wasi: false             # Rust/native Extism plugin
+        api:
+          - handle_cast         # fn handle_cast() — process incoming message
+        host_functions:
+          - ma_send             # full-control outbound envelope
+      python:
+        protocol: /ma/stateless/python/0.0.1
+        wasi: true              # Python/WASI plugin
+        api:
+          - handle_cast
+        host_functions:
+          - ma_reply            # reply to sender
+          - ma_send
+    stateful:
+      python:
+        protocol: /ma/stateful/python/0.0.1
+        wasi: true
+        api:
+          - init                # called on load with persisted state bytes
+          - handle_call
+          - save_state          # janitor snapshot trigger
+        host_functions:
+          - ma_reply
+          - ma_send
+          - ma_set_state        # persist state to IPFS via runtime
+
+  # Entities: named plugin instances
   entities:
-    greeter:
-      kind: "/ma/entity/greeter/0.0.1"
-      behavior_cid: "bafyreiXXXX"    # CID of compiled .wasm blob
-      acl: ["*"]
-      owner: "did:ma:<owner>"        # optional; falls back to runtime owner
+    ping:
+      kind: /ma/stateless/ping/0.0.1
+      behavior_cid: bafkrei…   # CID of compiled .wasm — `ipfs add plugin.wasm`
+      acl:
+        "*": x                 # any caller may invoke
+    fortune:
+      kind: /ma/stateless/python/0.0.1
+      behavior_cid: Qm…
+      acl:
+        "*": x
+      # owner: did:ma:<other>  # optional; falls back to runtime.owner
 ```
 
 ---
@@ -192,18 +223,69 @@ Entity behaviour lives in Wasm blobs stored on IPFS.
 ```
 RuntimeManifest { owner, kinds: {family→implementation→CID}, entities: {name→CID→EntityNode}, locales: {lang→CID} }
 KindNode        { protocol, api: [String] }
-EntityNode      { name, kind, behavior: {"/":CID}, state: {"/":CID}?, owner, acl: [String], wasi: bool }
+EntityNode      { name, kind, behavior: {"/":CID}, state: {"/":CID}?, owner, acl: {"/":CID}, wasi: bool }
 ```
 
-### `#root` RPC commands
+### Management RPC — dot-path protocol
 
-Send CBOR atoms/arrays to `did:ma:<runtime>#root`:
+Send CBOR to the **bare** runtime DID (`did:ma:<runtime>`, no fragment).
+Verb format: `":ns.path[:[value]]"` — trailing `:` means set/delete.
 
-| Verb | Args | Reply |
-|------|------|-------|
-| `:list-entities` | — | JSON array of names |
-| `:create-entity` | name, kind, behavior_cid [, acl…] | JSON `{cid, entity_cid, status}` |
-| `:delete-entity` | name | JSON `{cid, status}` |
+#### Entities
+
+| Verb (CBOR atom/array) | Args | Effect | Reply |
+|------------------------|------|--------|-------|
+| `":entities"` | — | List all entity names | JSON `["name", …]` |
+| `":entities.<name>"` | — | Get entity node | JSON `EntityNode` |
+| `[":entities.<name>:", "<cid>"]` | CID of EntityNode | Create / update entity | JSON `{cid, entity_cid, status}` |
+| `":entities.<name>:"` | — | Delete entity | JSON `{cid, status}` |
+
+#### Kinds
+
+| Verb | Args | Effect | Reply |
+|------|------|--------|-------|
+| `":kinds"` | — | List all kinds | JSON object |
+| `":kinds.<family>"` | — | Get all implementations in family | JSON object |
+| `":kinds.<family>.<impl>"` | — | Get kind ref | JSON |
+| `[":kinds.<family>.<impl>:", "<cid>"]` | CID | Set kind ref | JSON `{cid, status}` |
+| `":kinds.<family>.<impl>:"` | — | Delete kind ref | JSON `{cid, status}` |
+
+#### Config
+
+| Verb | Args | Effect | Reply |
+|------|------|--------|-------|
+| `":config"` | — | Get entire config map | JSON object |
+| `":config.<key>"` | — | Get value for key | JSON |
+| `[":config.<key>:", "<value>"]` | string or JSON | Set key | JSON `{cid, status}` |
+| `":config.<key>:"` | — | Delete key | JSON `{cid, status}` |
+
+#### Ping
+
+| Verb | Effect |
+|------|--------|
+| `":ping"` | Dispatch to `ping` entity plugin if loaded; otherwise ignored |
+
+#### From ego terminal
+
+```
+# list entities
+@sky:entities
+
+# get entity
+@sky:entities.ping
+
+# create / update entity (CID is the EntityNode dag-cbor CID)
+@sky:entities.ping: bafyreiXXXXXXXX
+
+# delete entity
+@sky:entities.ping:
+
+# set a kind
+@sky:kinds.ma-entity.wasi: bafyreiYYYYYYYY
+
+# set a config key
+@sky:config.poll_interval_ms: 250
+```
 
 ### Plugin ABI
 
@@ -242,13 +324,15 @@ Each Wasm plugin must export:
 
 ```yaml
 acl:
-  - "*"               # permit all
-  - "!did:ma:<bad>"   # deny this identity and all its DID-URLs
+  "*": "rwx"          # everyone: full access
+  "did:ma:bob": "rx"  # read + execute, no write
+  "did:ma:eve":       # null = explicit deny
 ```
 
-- Deny always wins over allow, including over `*`.
-- Applied to both services on every incoming message.
-- Default when no file supplied: open (`*`).
+- Deny always wins over wildcard allow. An explicit `null` entry denies.
+- `/ma/ipfs/0.0.1` requires `w`; `/ma/rpc/0.0.1` requires `x`.
+- Fragment stripped from DID-URLs before lookup.
+- Default when no file supplied: `"*": "rwx"`.
 
 ---
 

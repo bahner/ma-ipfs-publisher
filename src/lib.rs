@@ -8,7 +8,7 @@
 /// # Examples
 ///
 /// ```
-/// use ma_ipfs_publisher::extract_imported_ipns_id_from_error_text;
+/// use ma_runtime::extract_imported_ipns_id_from_error_text;
 ///
 /// let text = "imported key IPNS id 'k51qzi5uqu5di8zyh33j0mvlj19vwt1wm1z0bztofwebkihfrdobsrzwmxpr77' does not match document DID IPNS '12D3KooWFQ64SYT3CmZTTYsqZyH9qM7bacBpYW7dXKbyBTF9JMMt'";
 ///
