@@ -54,5 +54,11 @@ generated-headless-config = Genererte hodeløs konfigurasjon.
 
 # Eierskap / krav
 runtime-claimed = Runtime registrert.
+
+# Beskyttede rotelementer
+refuse-delete-root = Nekter bestemt å slette påkrevd rotelement
+no-root-acl = Ingen rot-ACL er konfigurert — kjøretiden opererer uten tilgangskontroll
+namespace-not-found = Navnerommet ble ikke funnet
+no-ns-gate-acl = Ingen port-ACL er konfigurert for dette navnerommet
 runtime-claim-persisted = Eier skrevet til konfigurasjon.
 runtime-already-claimed = Runtime er allerede registrert.

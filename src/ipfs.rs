@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use std::sync::Arc;
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::ipfs::MA_IPNS_ALIAS_HASH_PREFIX;
 use ma_core::ipfs_add;
@@ -28,6 +29,7 @@ pub struct IpfsHandlerCtx<'a> {
     pub endpoint: &'a dyn ma_core::MaEndpoint,
     pub kubo_rpc_url: &'a str,
     pub publisher: &'a IpfsDidPublisher,
+    pub resolver: Arc<IpfsGatewayResolver>,
 }
 
 pub async fn do_publish_own_document(
@@ -425,10 +427,9 @@ pub async fn handle_ipfs_message(
             .context("failed to build ipfs-publish reply")?;
             reply.reply_to = Some(message.id.clone());
 
-            let resolver = IpfsGatewayResolver::new(ctx.kubo_rpc_url.to_string());
             match ctx
                 .endpoint
-                .outbox(&resolver, &sender.base_id(), RPC_PROTOCOL_ID)
+                .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
                 .await
             {
                 Ok(mut outbox) => {
@@ -498,10 +499,9 @@ async fn handle_ipfs_store(
     .context("failed to build ipfs-store reply")?;
     reply.reply_to = Some(orig_message.id.clone());
 
-    let resolver = IpfsGatewayResolver::new(ctx.kubo_rpc_url.to_string());
     match ctx
         .endpoint
-        .outbox(&resolver, &sender.base_id(), RPC_PROTOCOL_ID)
+        .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
         .await
     {
         Ok(mut outbox) => {

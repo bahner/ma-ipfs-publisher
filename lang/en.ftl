@@ -54,5 +54,11 @@ generated-headless-config = Generated headless config.
 
 # Ownership / claim
 runtime-claimed = Runtime claimed.
+
+# Protected root elements
+refuse-delete-root = Steadfastly refuse to delete required root element
+no-root-acl = No root ACL configured — runtime is operating without access control
+namespace-not-found = Namespace not found
+no-ns-gate-acl = No gate ACL configured for this namespace
 runtime-claim-persisted = Owner written to config.
 runtime-already-claimed = Runtime already claimed.

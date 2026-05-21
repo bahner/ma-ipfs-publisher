@@ -5,7 +5,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
 use ma_core::{
-    ipfs_add, Did, IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
+    ipfs_add, Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, SigningKey, MESSAGE_TYPE_RPC,
+    MESSAGE_TYPE_RPC_REPLY,
 };
 use tracing::{debug, info, warn};
 
@@ -26,6 +27,7 @@ pub struct RpcHandlerCtx<'a> {
     pub signing_key: &'a SigningKey,
     pub endpoint: &'a dyn ma_core::MaEndpoint,
     pub kubo_rpc_url: &'a str,
+    pub resolver: Arc<IpfsGatewayResolver>,
     pub entity_registry: EntityRegistry,
     pub stats: SharedStats,
     pub acl_cache: AclCache,
@@ -293,10 +295,9 @@ async fn send_envelope(env: SendEnvelope, ctx: &RpcHandlerCtx<'_>, fragment: &st
     .context("failed to build plugin outbound message")?;
     msg.reply_to = env.reply_to;
 
-    let resolver = IpfsGatewayResolver::new(ctx.kubo_rpc_url.to_string());
     match ctx
         .endpoint
-        .outbox(&resolver, &recipient.base_id(), RPC_PROTOCOL_ID)
+        .outbox(ctx.resolver.as_ref(), &recipient.base_id(), RPC_PROTOCOL_ID)
         .await
     {
         Ok(mut outbox) => {
@@ -374,6 +375,7 @@ async fn handle_root_builtin(
         "entities" => handle_entities_ns(message, rest, tail, args, &verb, ctx).await,
         "kinds" => handle_kinds_ns(message, rest, tail, args, &verb, ctx).await,
         "config" => handle_config_ns(message, rest, tail, args, &verb, ctx).await,
+        "acl" => handle_root_acl(message, tail, args, &verb, ctx).await,
         "ping" => {
             info!("{}", crate::i18n::t("ping-received"));
             let mut pong = Vec::new();
@@ -382,6 +384,87 @@ async fn handle_root_builtin(
             send_rpc_reply(message, ctx, pong).await
         }
         other => handle_namespace_op(message, other, rest, tail, args, &verb, ctx).await,
+    }
+}
+
+// ── Root transport-gate ACL `:acl` ────────────────────────────────────────────
+
+/// Handles the root-level `:acl` verb family.
+///
+/// | Verb | Args | Effect |
+/// |------|------|--------|
+/// | `:acl` or `:acl:edit` | — | Return current ACL YAML for editing |
+/// | `:acl: <cid>` | CID text | Load new ACL from IPFS CID, reload live gate |
+/// | `:acl:` | — | Error — refuses to delete required root element |
+///
+/// Deleting the root ACL is intentionally forbidden: an empty `AclMap` denies
+/// all callers, which would lock out the owner. Instead, replace the ACL with
+/// a new document via `[:acl: <cid>]`.
+async fn handle_root_acl(
+    message: &ma_core::Message,
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match (tail, args.as_slice()) {
+        // GET or :edit — return the current ACL CID and YAML
+        (None | Some("edit"), []) => {
+            let root_cid = current_root_cid(ctx).await?;
+            let manifest: RuntimeManifest =
+                crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+            match &manifest.acl {
+                Some(link) => {
+                    let acl_map: AclMap =
+                        crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &link.cid).await?;
+                    let yaml = serde_yaml::to_string(&acl_map)
+                        .context("serialising root ACL as YAML")?;
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(
+                        &CborValue::Array(vec![
+                            CborValue::Text(":ok".to_string()),
+                            CborValue::Text(yaml),
+                        ]),
+                        &mut out,
+                    )
+                    .context("encoding root ACL reply as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                None => {
+                    send_rpc_i18n_error(message, ctx, "no-root-acl").await
+                }
+            }
+        }
+        // SET — load a new ACL from the given CID
+        (Some(""), [CborValue::Text(cid)]) => {
+            let cid = cid.clone();
+            let acl_map = crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid)
+                .await
+                .with_context(|| format!("loading root ACL from {cid}"))?;
+            let new_root = with_manifest(ctx, |m| {
+                m.acl = Some(IpldLink::new(&cid));
+                Ok(())
+            })
+            .await?;
+            *ctx.root_acl.write().await = acl_map;
+            info!(cid = %cid, "Root transport ACL updated");
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding root ACL set reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        // DELETE is refused — the root transport ACL must never be cleared.
+        // Removing it would open the runtime to everyone.
+        (Some(""), []) => {
+            send_rpc_i18n_error(message, ctx, "refuse-delete-root").await
+        }
+        _ => Err(anyhow!("unknown :acl operation: {verb}")),
     }
 }
 
@@ -404,8 +487,7 @@ async fn handle_entities_ns(
                 send_rpc_reply(message, ctx, out).await
             }
             (Some(""), _) => {
-                // The :entities root is protected — silently ignore delete attempts.
-                send_rpc_ok_reply(message, ctx).await
+                send_rpc_i18n_error(message, ctx, "refuse-delete-root").await
             }
             _ => Err(anyhow!("unknown entities operation: {verb}")),
         },
@@ -792,8 +874,10 @@ async fn handle_kinds_ns(
             .context("encoding kinds-upsert reply as CBOR")?;
             send_rpc_reply(message, ctx, out).await
         }
-        // [":kinds:"] → delete root (protected — silently accept)
-        (Some(""), []) => send_rpc_ok_reply(message, ctx).await,
+        // [":kinds:"] → delete root (protected — refuse)
+        (Some(""), []) => {
+            send_rpc_i18n_error(message, ctx, "refuse-delete-root").await
+        }
         _ => Err(anyhow!("unknown kinds operation: {verb}")),
     }
 }
@@ -818,8 +902,7 @@ async fn handle_config_ns(
                 send_rpc_reply(message, ctx, out).await
             }
             (Some(""), _) => {
-                // The :config root is protected — silently ignore delete attempts.
-                send_rpc_ok_reply(message, ctx).await
+                send_rpc_i18n_error(message, ctx, "refuse-delete-root").await
             }
             _ => Err(anyhow!("unknown config operation: {verb}")),
         },
@@ -984,15 +1067,14 @@ async fn handle_ns_root(
                     send_rpc_reply(message, ctx, out).await
                 }
                 None => {
-                    send_rpc_error_reply(message, ctx, &format!("namespace not found: {ns}")).await
+                    send_rpc_i18n_error(message, ctx, "namespace-not-found").await
                 }
             }
         }
         // Create / upsert namespace: `[:ns:]`
         (Some(""), []) => {
             if RESERVED_NS.contains(&ns) {
-                // Reserved roots are protected — silently ignore.
-                return send_rpc_ok_reply(message, ctx).await;
+                return send_rpc_i18n_error(message, ctx, "refuse-delete-root").await;
             }
             let new_root = with_manifest(ctx, |m| {
                 m.namespaces
@@ -1045,8 +1127,7 @@ async fn handle_ns_acl_gate(
                     send_rpc_reply(message, ctx, out).await
                 }
                 None => {
-                    send_rpc_error_reply(message, ctx, &format!("no gate ACL for namespace {ns}"))
-                        .await
+                    send_rpc_i18n_error(message, ctx, "no-ns-gate-acl").await
                 }
             }
         }
@@ -1393,10 +1474,9 @@ async fn send_rpc_reply(
     .context("failed to build RPC reply")?;
     reply.reply_to = Some(incoming.id.clone());
 
-    let resolver = IpfsGatewayResolver::new(ctx.kubo_rpc_url.to_string());
     match ctx
         .endpoint
-        .outbox(&resolver, &sender.base_id(), RPC_PROTOCOL_ID)
+        .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
         .await
     {
         Ok(mut outbox) => {
@@ -1413,6 +1493,31 @@ async fn send_rpc_reply(
         }
     }
     Ok(())
+}
+
+/// Resolve caller's DID document and extract their preferred language.
+/// Falls back to the runtime's own language on any error.
+async fn caller_lang(from: &str, resolver: &IpfsGatewayResolver) -> String {
+    if let Ok(doc) = resolver.resolve(from).await {
+        if let Some(Ipld::Map(ma)) = &doc.ma {
+            if let Some(Ipld::String(lang)) = ma.get("lang") {
+                if crate::i18n::has_lang(lang) {
+                    return lang.clone();
+                }
+            }
+        }
+    }
+    crate::i18n::runtime_lang().to_string()
+}
+
+/// Send an RPC error reply with a message localised to the caller's language.
+async fn send_rpc_i18n_error(
+    incoming: &ma_core::Message,
+    ctx: &RpcHandlerCtx<'_>,
+    key: &str,
+) -> Result<()> {
+    let lang = caller_lang(&incoming.from, ctx.resolver.as_ref()).await;
+    send_rpc_error_reply(incoming, ctx, &crate::i18n::t_lang(&lang, key)).await
 }
 
 async fn send_rpc_ok_reply(incoming: &ma_core::Message, ctx: &RpcHandlerCtx<'_>) -> Result<()> {

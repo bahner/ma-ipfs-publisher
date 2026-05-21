@@ -44,6 +44,12 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   denies a principal and overrides any wildcard allow. Capabilities are plain
   strings in YAML sequences — `/ma/rpc/0.0.1` requires `"rpc"`,
   `/ma/ipfs/0.0.1` requires `"ipfs"`.
+- **Never default or fall back to open ACLs.** An empty `AclMap` (no entries)
+  denies everyone. Code must never construct or substitute an open ACL
+  (`{"*": ["*"]}`) as a fallback for a missing or unreadable ACL document.
+  A missing ACL is a configuration error — fail loudly rather than silently
+  opening access. The `:acl:` delete verb on the root ACL is therefore a no-op;
+  to change the ACL, replace it with a new published CID via `:acl: <cid>`.
 
 ## Dependencies
 

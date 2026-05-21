@@ -13,7 +13,7 @@ use cid::Cid;
 use clap::Parser;
 use ma_core::config::{Config, MaArgs, SecretBundle};
 use ma_core::ipfs::IpfsDidPublisher;
-use ma_core::{ipns_from_secret, Ipld, ReplayGuard, IPFS_PROTOCOL_ID};
+use ma_core::{ipns_from_secret, IpfsGatewayResolver, Ipld, ReplayGuard, IPFS_PROTOCOL_ID};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -524,6 +524,18 @@ async fn main() -> Result<()> {
         "{}", i18n::t("started")
     );
 
+    // ── Shared DID document resolver (cached, TTL configurable) ─────────────
+    let did_resolver_pos_ttl =
+        get_u64_setting(&config, "did_resolver_positive_ttl_secs", 300);
+    let did_resolver_neg_ttl =
+        get_u64_setting(&config, "did_resolver_negative_ttl_secs", 30);
+    let shared_resolver = Arc::new(
+        IpfsGatewayResolver::new(&config.kubo_rpc_url).with_cache_ttls(
+            Duration::from_secs(did_resolver_pos_ttl),
+            Duration::from_secs(did_resolver_neg_ttl),
+        ),
+    );
+
     // ── Main event loop ────────────────────────────────────────────────────────
     let mut ticker = tokio::time::interval(Duration::from_millis(cli.poll_ms));
 
@@ -558,6 +570,7 @@ async fn main() -> Result<()> {
                             signing_key: &signing_key,
                             endpoint: &*endpoint,
                             kubo_rpc_url: &config.kubo_rpc_url,
+                            resolver: Arc::clone(&shared_resolver),
                             entity_registry: entity_registry.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
@@ -601,6 +614,7 @@ async fn main() -> Result<()> {
                                 endpoint: &*endpoint,
                                 kubo_rpc_url: &config.kubo_rpc_url,
                                 publisher: &ipfs.publisher,
+                                resolver: Arc::clone(&shared_resolver),
                             },
                             &mut ipfs.replay_guard,
                         )
