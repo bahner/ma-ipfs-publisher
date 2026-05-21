@@ -30,9 +30,10 @@ struct Cli {
     #[command(flatten)]
     ma: MaArgs,
 
-    /// ACL YAML file. If absent, all callers are permitted.
+    /// DID(s) of the runtime owner(s). Repeat for multiple: --owner <did1> --owner <did2>.
+    /// Falls back to `owners:` list in config.yaml.
     #[arg(long)]
-    acl_file: Option<PathBuf>,
+    owner: Vec<String>,
 
     /// Publish FTL lang files + manifest from YAML and print the resulting root CID, then exit.
     #[arg(long)]
@@ -92,6 +93,34 @@ async fn main() -> Result<()> {
     let config = Config::from_args(&cli.ma, MA_DEFAULT_SLUG)?;
     config.init_logging()?;
 
+    // ── Auto-generate headless config on first run ────────────────────────────
+    // If the secret bundle is missing (true first-run state), generate a full
+    // headless config automatically so the daemon works out of the box without
+    // manual configuration.
+    let bundle_path = config.effective_secret_bundle()?;
+    let config = if !bundle_path.exists() {
+        warn!("No config found.");
+        warn!("Initialising new runtime identity.");
+        Config::gen_headless(&cli.ma, MA_DEFAULT_SLUG)?;
+        let config = Config::from_args(&cli.ma, MA_DEFAULT_SLUG)?;
+        let mut bundle = load_secret_bundle(&config)?;
+        bundle
+            .generate_key("runtime_ipns")
+            .context("failed to generate 'runtime_ipns' key")?;
+        let passphrase = config
+            .secret_bundle_passphrase
+            .as_deref()
+            .ok_or_else(|| anyhow!("secret_bundle_passphrase missing after gen_headless"))?;
+        let bundle_path = config.effective_secret_bundle()?;
+        bundle
+            .save(&bundle_path, passphrase)
+            .context("failed to re-save bundle with 'runtime_ipns' key")?;
+        warn!("Generated headless config.");
+        Config::from_args(&cli.ma, MA_DEFAULT_SLUG)?
+    } else {
+        config
+    };
+
     // ── gen-root-cid: publish bootstrap tree + lang files to IPFS, print root CID, exit ──
     if let Some(ref yaml_path) = cli.gen_root_cid {
         let publisher = IpfsDidPublisher::new(&config.kubo_rpc_url)
@@ -140,7 +169,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut acl = acl::load_acl(cli.acl_file.as_deref())?;
+    let acl = acl::new_shared_acl(acl::AclMap::new()); // deny-all until manifest loads
 
     let ipfs_publisher_enabled = config
         .extra
@@ -242,9 +271,7 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to resolve runtime root CID from IPNS")?;
         if root_cid.is_none() {
-            return Err(anyhow!(
-                "no runtime root CID found in IPNS; provide --root-cid <cid>"
-            ));
+            warn!("No runtime root CID found in IPNS; starting as empty runtime");
         }
     }
 
@@ -285,18 +312,15 @@ async fn main() -> Result<()> {
             kubo::dag_get(&config.kubo_rpc_url, rc).await;
         match manifest {
             Ok(m) => {
-                // If the manifest carries a root ACL and no --acl-file was
-                // provided, use the manifest ACL as the transport gate.
-                if cli.acl_file.is_none() {
-                    if let Some(ref link) = m.acl {
-                        match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
-                            Ok(manifest_acl) => {
-                                info!(cid = %link.cid, "Root transport-gate ACL loaded from manifest");
-                                acl = manifest_acl;
-                            }
-                            Err(e) => {
-                                warn!(cid = %link.cid, error = %e, "failed to load root ACL from manifest; keeping file-based ACL");
-                            }
+                // Load the manifest ACL as the transport gate.
+                if let Some(ref link) = m.acl {
+                    match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
+                        Ok(manifest_acl) => {
+                            info!(cid = %link.cid, "Root transport-gate ACL loaded from manifest");
+                            *acl.write().await = manifest_acl;
+                        }
+                        Err(e) => {
+                            warn!(cid = %link.cid, error = %e, "failed to load root ACL from manifest");
                         }
                     }
                 }
@@ -358,6 +382,30 @@ async fn main() -> Result<()> {
         .signing_key()
         .context("failed to derive signing key")?;
 
+    // ── Resolve owners: --owner CLI + config.extra["owner"] (list or string) ──
+    let mut resolved_owners: Vec<String> = {
+        let from_config = match config.extra.get("owners") {
+            Some(serde_yaml::Value::Sequence(seq)) => seq
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            Some(serde_yaml::Value::String(s)) => vec![s.clone()],
+            _ => vec![],
+        };
+        from_config
+    };
+    for o in &cli.owner {
+        if !resolved_owners.contains(o) {
+            resolved_owners.push(o.clone());
+        }
+    }
+
+    // Seed the live ACL with wildcard permissions for every known owner so
+    // they can use RPC immediately (before any manifest ACL is published).
+    if !resolved_owners.is_empty() {
+        status::grant_owners_in_acl(&acl, &resolved_owners).await;
+    }
+
     // ── Shared stats ───────────────────────────────────────────────────────────
     let entity_names: Vec<String> = entity_registry.read().await.keys().cloned().collect();
     let stats = Arc::new(tokio::sync::RwLock::new(status::Stats {
@@ -368,11 +416,13 @@ async fn main() -> Result<()> {
         entity_names,
         root_cid: root_cid.clone(),
         kubo_rpc_url: config.kubo_rpc_url.clone(),
+        owners: resolved_owners,
+        config_path: config.config_path.clone(),
         ..Default::default()
     }));
 
     let cors_origins = status_cors_allowed_origins(&config);
-    status::spawn_status_server(stats.clone(), cli.status_bind, &cors_origins);
+    status::spawn_status_server(stats.clone(), acl.clone(), cli.status_bind, &cors_origins);
 
     // Periodisk DID-republisering (hver 5. minutt) fra in-memory runtime-head.
     let refresh_kubo_url = config.kubo_rpc_url.clone();
@@ -503,7 +553,7 @@ async fn main() -> Result<()> {
                     }
                     if let Err(err) = rpc::handle_rpc_message(
                         &message,
-                        &acl,
+                        &*acl.read().await,
                         &rpc::RpcHandlerCtx {
                             our_did: &our_did,
                             signing_key: &signing_key,
@@ -512,7 +562,7 @@ async fn main() -> Result<()> {
                             entity_registry: entity_registry.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
-                            root_acl: &acl,
+                            root_acl: acl.clone(),
                         },
                     )
                     .await
@@ -545,7 +595,7 @@ async fn main() -> Result<()> {
                         }
                         if let Err(err) = ipfs::handle_ipfs_message(
                             &message,
-                            &acl,
+                            &*acl.read().await,
                             &ipfs::IpfsHandlerCtx {
                                 our_did: &our_did,
                                 signing_key: &signing_key,

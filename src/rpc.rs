@@ -9,7 +9,7 @@ use ma_core::{
 };
 use tracing::{debug, info, warn};
 
-use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
+use crate::acl::{check_full, AclCache, AclMap, SharedAcl, CAP_RPC};
 use crate::entity::{
     CastInput, EntityNode, IpldLink, LocalMessage, NamespaceNode, PluginCtx, PluginKind,
     RuntimeManifest, SendEnvelope,
@@ -29,8 +29,8 @@ pub struct RpcHandlerCtx<'a> {
     pub entity_registry: EntityRegistry,
     pub stats: SharedStats,
     pub acl_cache: AclCache,
-    /// Root transport ACL — used for entity/kinds management capability checks.
-    pub root_acl: &'a AclMap,
+    /// Shared root transport ACL — owner may update at runtime via `:acl`.
+    pub root_acl: SharedAcl,
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -1351,8 +1351,8 @@ async fn check_entity_management_cap(
     ctx: &RpcHandlerCtx<'_>,
     caps: &[&str],
 ) -> Result<()> {
-    let acl = ctx.root_acl;
-    check_full(acl, &message.from, caps, |_| async { Ok(vec![]) })
+    let acl = ctx.root_acl.read().await;
+    check_full(&*acl, &message.from, caps, |_| async { Ok(vec![]) })
         .await
         .with_context(|| {
             format!(

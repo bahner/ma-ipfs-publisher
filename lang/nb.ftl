@@ -46,3 +46,13 @@ entity-state-empty = Plugin returnerte tom tilstand, hopper over lagring
 entity-states-saved = Enhetstilstander lagret
 link-set = Lenke satt
 ftl-loaded = Språkmeldinger lastet fra IPFS
+
+# Første-gangs auto-oppsett
+no-config-found = Ingen konfigurasjon funnet.
+initialising-new-identity = Oppretter ny runtime-identitet.
+generated-headless-config = Genererte hodeløs konfigurasjon.
+
+# Eierskap / krav
+runtime-claimed = Runtime registrert.
+runtime-claim-persisted = Eier skrevet til konfigurasjon.
+runtime-already-claimed = Runtime er allerede registrert.

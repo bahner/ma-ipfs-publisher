@@ -68,6 +68,14 @@ const MESSAGE_IDS: &[&str] = &[
     "entity-states-saved",
     // i18n itself
     "ftl-loaded",
+    // First-run auto-init
+    "no-config-found",
+    "initialising-new-identity",
+    "generated-headless-config",
+    // Ownership / claim
+    "runtime-claimed",
+    "runtime-claim-persisted",
+    "runtime-already-claimed",
 ];
 
 /// Initialise i18n by fetching the FTL file for `lang` from IPFS.

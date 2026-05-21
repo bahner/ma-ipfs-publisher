@@ -46,3 +46,13 @@ entity-state-empty = Plugin returned empty state, skipping persist
 entity-states-saved = Entity states saved
 link-set = Link set
 ftl-loaded = Lang messages loaded from IPFS
+
+# First-run auto-init
+no-config-found = No config found.
+initialising-new-identity = Initialising new runtime identity.
+generated-headless-config = Generated headless config.
+
+# Ownership / claim
+runtime-claimed = Runtime claimed.
+runtime-claim-persisted = Owner written to config.
+runtime-already-claimed = Runtime already claimed.

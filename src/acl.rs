@@ -1,15 +1,12 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use directories::ProjectDirs;
 use ma_core::check_cap;
 use tokio::sync::RwLock;
-use tracing::info;
 
 pub use ma_core::{
-    normalize_principal, validate_acl_map, AclMap, CapabilityEntry, GROUP_PREFIX, CAP_IPFS,
+    normalize_principal, AclMap, CapabilityEntry, GROUP_PREFIX, CAP_IPFS,
     CAP_RPC,
 };
 
@@ -58,44 +55,15 @@ pub async fn load_acl_from_cid(kubo_rpc_url: &str, cid: &str) -> Result<AclMap> 
         .with_context(|| format!("fetching ACL document {cid}"))
 }
 
-const MA_DEFAULT_SLUG: &str = "ma";
-const OPEN_ACL_YAML: &str = include_str!("../default.acl");
+/// Shared, mutable root transport-gate ACL.
+///
+/// An empty map means deny-all — nothing is allowed until a manifest or
+/// owner explicitly sets an ACL.
+pub type SharedAcl = Arc<RwLock<AclMap>>;
 
-fn default_acl_path() -> Result<PathBuf> {
-    ProjectDirs::from("", "ma", "ma")
-        .ok_or_else(|| anyhow::anyhow!("cannot determine XDG base directories"))
-        .map(|d| d.config_dir().join(format!("{MA_DEFAULT_SLUG}.acl")))
-}
-
-fn parse_acl_yaml(yaml: &str) -> Result<AclMap> {
-    #[derive(serde::Deserialize)]
-    struct AclFile {
-        acl: AclMap,
-    }
-    let f: AclFile =
-        serde_yaml::from_str(yaml).map_err(|e| anyhow::anyhow!("invalid ACL YAML: {e}"))?;
-    validate_acl_map(&f.acl).map_err(|e| anyhow::anyhow!("invalid ACL key: {e}"))?;
-    Ok(f.acl)
-}
-
-pub fn load_acl(explicit: Option<&std::path::Path>) -> Result<AclMap> {
-    if let Some(p) = explicit {
-        let yaml = std::fs::read_to_string(p)
-            .with_context(|| format!("failed to read ACL file {}", p.display()))?;
-        info!(path = %p.display(), "ACL loaded from file");
-        parse_acl_yaml(&yaml).context("invalid ACL YAML")
-    } else {
-        let default_path = default_acl_path()?;
-        if default_path.exists() {
-            let yaml = std::fs::read_to_string(&default_path)
-                .with_context(|| format!("failed to read ACL file {}", default_path.display()))?;
-            info!(path = %default_path.display(), "ACL loaded from default path");
-            parse_acl_yaml(&yaml).context("invalid ACL YAML")
-        } else {
-            info!(path = %default_path.display(), "no ACL file found, using open access");
-            parse_acl_yaml(OPEN_ACL_YAML).context("invalid open ACL")
-        }
-    }
+/// Create a new [`SharedAcl`] from an initial [`AclMap`].
+pub fn new_shared_acl(map: AclMap) -> SharedAcl {
+    Arc::new(RwLock::new(map))
 }
 
 /// Uniform async ACL check with group expansion.
