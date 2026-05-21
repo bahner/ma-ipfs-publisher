@@ -14,11 +14,12 @@
 #   - Wasm plugin(s) already pinned to IPFS (get the CID from `ipfs add <plugin.wasm>`)
 
 runtime:
-  # Named entities — defined directly under `runtime:`, no `entities:` wrapper.
+  # Entities — defined under `entities:` as bare names (no `#` prefix).
   # Each entity is a Wasm plugin stored on IPFS.
   # Addressed as did:ma:<runtime-ipns>#<name>  (the `#` is the DID-URL fragment).
   # Pin your Wasm file first:  ipfs add <plugin>.wasm
-  "#rms":
-    kind: /ma/stateless/python/0.0.1
-    behavior_cid: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
-    acl: ""   # empty = deny-all; set to a named ACL ref for access control
+  entities:
+    rms:
+      kind: /ma/stateless/python/0.0.1
+      behavior_cid: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+      acl: ""   # empty = deny-all; set to a named ACL ref for access control

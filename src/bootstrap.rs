@@ -36,9 +36,9 @@ pub struct BootstrapYaml {
 pub struct BootstrapRuntime {
     #[serde(default)]
     pub kinds: BootstrapKindsDict,
-    /// Fragment entities defined directly under `runtime:` in the YAML.
-    /// Keys must start with `#` (e.g. `"#fortune"`).  No `entities:` wrapper.
-    #[serde(flatten)]
+    /// Entities defined under `entities:` in the YAML.
+    /// Keys are bare entity names (e.g. `"fortune"`), not `#`-prefixed.
+    #[serde(default)]
     pub entities: HashMap<String, BootstrapEntity>,
 }
 

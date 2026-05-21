@@ -29,6 +29,8 @@ pub struct RpcHandlerCtx<'a> {
     pub entity_registry: EntityRegistry,
     pub stats: SharedStats,
     pub acl_cache: AclCache,
+    /// Root transport ACL — used for entity/kinds management capability checks.
+    pub root_acl: &'a AclMap,
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -38,7 +40,15 @@ pub async fn handle_rpc_message(
     acl: &AclMap,
     ctx: &RpcHandlerCtx<'_>,
 ) -> Result<()> {
-    check_full(acl, &message.from, &[CAP_RPC], |_| async { Ok(vec![]) }).await?;
+    // Intra-runtime messages (sender = `<our_did>#<entity>`) skip the root ACL
+    // transport gate — they are trusted local dispatches between entities on
+    // this runtime.
+    let intra_runtime = message
+        .from
+        .starts_with(&format!("{}#", ctx.our_did));
+    if !intra_runtime {
+        check_full(acl, &message.from, &[CAP_RPC], |_| async { Ok(vec![]) }).await?;
+    }
 
     if message.message_type != MESSAGE_TYPE_RPC {
         return Err(anyhow!(
@@ -51,8 +61,17 @@ pub async fn handle_rpc_message(
     let term: CborValue = ciborium::de::from_reader(message.payload().as_slice())
         .context("invalid CBOR in RPC message")?;
 
-    // Fragment routing: messages addressed to `did:ma:<ipns>#fragment` → entity plugin.
+    // Fragment routing: messages addressed to `did:ma:<ipns>#fragment`.
+    //
+    // Two cases:
+    //   - Management term (":", or [":", cid]) → entity CRUD (register/delete).
+    //   - All other terms → entity verb dispatch.
     if let Some(fragment) = extract_fragment(&message.to, ctx.our_did) {
+        if is_entity_management_term(&term) {
+            // Route fragment-addressed CRUD to the entities namespace handler.
+            // The fragment is the entity name; verb/args are extracted below.
+            return handle_fragment_entity_crud(message, fragment, term, ctx).await;
+        }
         let ep = ctx.entity_registry.read().await.get(fragment).cloned();
         return if let Some(entity) = ep {
             match handle_entity_plugin_message(message, term, &entity, ctx).await {
@@ -85,6 +104,41 @@ pub async fn handle_rpc_message(
 fn extract_fragment<'a>(to: &'a str, our_did: &str) -> Option<&'a str> {
     let prefix = format!("{our_did}#");
     to.strip_prefix(prefix.as_str())
+}
+
+/// Returns `true` when the CBOR term represents a CRUD management operation
+/// rather than an entity verb call.
+///
+/// Convention: a term whose verb atom (first element of a tuple, or the atom
+/// itself) is exactly `":"` (empty path after stripping the leading `:`) is a
+/// CRUD operation:
+/// - `":"` alone → delete entity
+/// - `[":", <cid>]` → upsert entity to `<cid>`
+///
+/// Any other atom (e.g. `":ping"`, `":cast"`) is an entity verb call.
+fn is_entity_management_term(term: &CborValue) -> bool {
+    match term {
+        CborValue::Text(s) => s == ":",
+        CborValue::Array(items) => {
+            matches!(items.first(), Some(CborValue::Text(s)) if s == ":")
+        }
+        _ => false,
+    }
+}
+
+/// Handle fragment-addressed CRUD: `@runtime#fortune:` (delete) or
+/// `@runtime#fortune: <cid>` (upsert). Delegates to the same logic as
+/// `:entities.<name>:` / `[:entities.<name>:, <cid>]` unfragmented CRUD.
+async fn handle_fragment_entity_crud(
+    message: &ma_core::Message,
+    fragment: &str,
+    term: CborValue,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    let (verb, args) = parse_cbor_verb(term)?;
+    let name = fragment.to_string();
+    // verb is ":" for CRUD; tail is empty string (delete/set)
+    handle_single_entity(message, &name, Some(""), args, &verb, ctx).await
 }
 
 // ── CBOR verb parsing ──────────────────────────────────────────────────────────
@@ -347,6 +401,10 @@ async fn handle_entities_ns(
                     .context("encoding entity list as CBOR")?;
                 send_rpc_reply(message, ctx, out).await
             }
+            (Some(""), _) => {
+                // The :entities root is protected — silently ignore delete attempts.
+                send_rpc_ok_reply(message, ctx).await
+            }
             _ => Err(anyhow!("unknown entities operation: {verb}")),
         },
         1 => handle_single_entity(message, &rest[0], tail, args, verb, ctx).await,
@@ -379,6 +437,8 @@ async fn handle_single_entity(
             send_rpc_reply(message, ctx, out).await
         }
         (Some(""), []) => {
+            // Delete entity — requires `delete` + `entities` in root ACL.
+            check_entity_management_cap(message, ctx, &["delete", "entities"]).await?;
             let name = name.as_str();
             ctx.entity_registry.write().await.remove(name);
             let new_root = with_manifest(ctx, |m| {
@@ -393,6 +453,8 @@ async fn handle_single_entity(
             send_rpc_reply(message, ctx, out).await
         }
         (Some(""), [CborValue::Text(path)]) => {
+            // Upsert entity — requires `create` + `entities` in root ACL.
+            check_entity_management_cap(message, ctx, &["create", "entities"]).await?;
             let name = name.as_str();
             // Accept bare CIDs, /ipfs/<cid>, and /ipns/<key> paths.
             let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
@@ -666,6 +728,10 @@ async fn handle_kinds_ns(
                     .context("encoding kinds as CBOR")?;
                 send_rpc_reply(message, ctx, out).await
             }
+            (Some(""), _) => {
+                // The :kinds root is protected — silently ignore delete attempts.
+                send_rpc_ok_reply(message, ctx).await
+            }
             _ => Err(anyhow!("unknown kinds operation: {verb}")),
         },
         [family] => match (tail, args.as_slice()) {
@@ -763,6 +829,10 @@ async fn handle_config_ns(
                 ciborium::ser::into_writer(&manifest.config, &mut out)
                     .context("encoding config as CBOR")?;
                 send_rpc_reply(message, ctx, out).await
+            }
+            (Some(""), _) => {
+                // The :config root is protected — silently ignore delete attempts.
+                send_rpc_ok_reply(message, ctx).await
             }
             _ => Err(anyhow!("unknown config operation: {verb}")),
         },
@@ -928,12 +998,8 @@ async fn handle_ns_root(
         // Create / upsert namespace: `[:ns:]`
         (Some(""), []) => {
             if RESERVED_NS.contains(&ns) {
-                return send_rpc_error_reply(
-                    message,
-                    ctx,
-                    &format!("namespace handle '{ns}' is reserved"),
-                )
-                .await;
+                // Reserved roots are protected — silently ignore.
+                return send_rpc_ok_reply(message, ctx).await;
             }
             let new_root = with_manifest(ctx, |m| {
                 m.namespaces
@@ -1287,6 +1353,24 @@ async fn current_root_cid(ctx: &RpcHandlerCtx<'_>) -> Result<String> {
         .ok_or_else(|| anyhow!("no root_cid; run --gen-root-cid first"))
 }
 
+/// Check that `message.from` holds all `caps` in the root ACL.
+/// Used for entity and kinds management operations.
+async fn check_entity_management_cap(
+    message: &ma_core::Message,
+    ctx: &RpcHandlerCtx<'_>,
+    caps: &[&str],
+) -> Result<()> {
+    let acl = ctx.root_acl;
+    check_full(acl, &message.from, caps, |_| async { Ok(vec![]) })
+        .await
+        .with_context(|| {
+            format!(
+                "entity management denied for {}: requires {:?}",
+                message.from, caps
+            )
+        })
+}
+
 async fn update_stats_entities(ctx: &RpcHandlerCtx<'_>) {
     let names: Vec<String> = ctx.entity_registry.read().await.keys().cloned().collect();
     ctx.stats.write().await.entity_names = names;
@@ -1333,6 +1417,16 @@ async fn send_rpc_reply(
         }
     }
     Ok(())
+}
+
+async fn send_rpc_ok_reply(
+    incoming: &ma_core::Message,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    let mut payload = Vec::new();
+    ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut payload)
+        .context("failed to encode :ok reply")?;
+    send_rpc_reply(incoming, ctx, payload).await
 }
 
 async fn send_rpc_error_reply(

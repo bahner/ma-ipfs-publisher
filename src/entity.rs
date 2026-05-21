@@ -162,9 +162,13 @@ impl KindRef {
 ///
 /// | Key pattern | Meaning |
 /// |-------------|---------|
-/// | `#name` | Entity (in manifest `entities` map, not in `extra`) |
-/// | `acl` | Named ACL sub-tree — flat, cached in memory |
-/// | anything else | IPLD link — no content validation |
+/// | `acl` | Namespace gate — IPLD link to an `AclMap` document |
+/// | `acls` | Named ACL library — flat map of name → IPLD link |
+/// | anything else | Free IPLD sub-tree (blob, list, nested object) |
+///
+/// Entities are **not** stored inside namespace nodes. All entities live in
+/// the flat `entities` map at the manifest root, identified by a globally
+/// unique bare name. DID fragment = entity name: `did:ma:<ipns>#fortune`.
 ///
 /// Blob values are stored as `{"/": "bafy…"}` in `extra`.  Nested structure
 /// is supported lazily: `alice.prosjekt.mappe.ting` resolves `extra["prosjekt"]`
@@ -236,7 +240,11 @@ pub struct RuntimeManifest {
     /// Global kinds registry. Shared across all namespaces.
     #[serde(default)]
     pub kinds: KindTree,
-    /// Global entity registry — fragment → IPLD link to [`EntityNode`].
+    /// Global entity registry — bare name → IPLD link to [`EntityNode`].
+    ///
+    /// Keys are globally unique entity names (e.g. `"fortune"`, `"rms"`).
+    /// No `#` prefix. The corresponding DID fragment equals the key:
+    /// `did:ma:<ipns>#fortune` ↔ `entities["fortune"]`.
     pub entities: HashMap<String, IpldLink>,
     #[serde(default)]
     pub lang: HashMap<String, IpldLink>,

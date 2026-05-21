@@ -9,7 +9,8 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 pub use ma_core::{
-    normalize_principal, validate_acl_map, AclMap, CapabilityEntry, CAP_IPFS, CAP_RPC,
+    normalize_principal, validate_acl_map, AclMap, CapabilityEntry, GROUP_PREFIX, CAP_IPFS,
+    CAP_RPC,
 };
 
 /// In-memory cache of named ACLs.
@@ -108,10 +109,9 @@ pub fn load_acl(explicit: Option<&std::path::Path>) -> Result<AclMap> {
 /// Evaluation order:
 /// 1. Explicit deny for `caller` or `"*"` → `Err` immediately (deny always wins).
 /// 2. `check_cap(acl, caller, cap)` for each cap in `caps` — first `Ok` returns.
-/// 3. For each cap: look for a `Grant(grantees)` entry keyed by that cap.
-///    Expand `group:…` refs via `resolve_group`; expand bare `did:ma:…` inline.
-///    Caller match → `Ok`.
-/// 4. Nothing matched → `Err`.
+/// 3. For each `+group` key with `Deny`: expand members, caller in group? → `Err`.
+/// 4. For each `+group` key with `Allow`: expand members, caller in group and has cap? → `Ok`.
+/// 5. Nothing matched → `Err`.
 ///
 /// `caps` uses OR semantics — the caller only needs to satisfy one.
 ///
@@ -144,45 +144,52 @@ where
         }
     }
 
-    // Step 3 — Grant entries (capability → grantee list), async group expansion.
-    for &cap in caps {
-        if let Some(entry) = acl.get(cap) {
-            if let Some(grantees) = entry.grantees() {
-                for grantee in grantees {
-                    if grantee.starts_with("group:") {
-                        // Async group expansion.
-                        let members = resolve_group(grantee).await.unwrap_or_default();
-                        if members.iter().any(|m| normalize_principal(m) == normalized) {
-                            return Ok(());
-                        }
-                    } else {
-                        // Bare DID or other principal ref.
-                        if normalize_principal(grantee) == normalized {
-                            return Ok(());
-                        }
-                    }
-                }
+    // Step 3 — group principal expansion (async).
+    // 3a: deny groups checked first (deny wins).
+    for (key, entry) in acl {
+        if !key.starts_with(GROUP_PREFIX) || !matches!(entry, CapabilityEntry::Deny) {
+            continue;
+        }
+        let members = resolve_group(key).await.unwrap_or_default();
+        if members.iter().any(|m| normalize_principal(m) == normalized) {
+            return Err(anyhow::anyhow!("access denied for {caller} (group {key})"));
+        }
+    }
+    // 3b: allow groups.
+    for (key, entry) in acl {
+        if !key.starts_with(GROUP_PREFIX) {
+            continue;
+        }
+        if let CapabilityEntry::Allow(cap_set) = entry {
+            let members = resolve_group(key).await.unwrap_or_default();
+            if members.iter().any(|m| normalize_principal(m) == normalized)
+                && caps.iter().any(|c| cap_set.contains(*c) || cap_set.contains("*"))
+            {
+                return Ok(());
             }
         }
     }
 
     Err(anyhow::anyhow!(
-        "access denied for {caller}: none of {:?} permitted",
-        caps
+        "access denied for {caller}: none of {caps:?} permitted"
     ))
 }
 
-/// Resolve a `group:<handle>.<name>` reference to a list of member DIDs.
+/// Resolve a `+<handle>.<path>` group reference to a list of member DIDs.
 ///
-/// Traverses `/ipfs/<root_cid>/<handle>/<name>` using `ipfs dag resolve` +
-/// `ipfs dag get` and deserialises the result as `Vec<String>`.
+/// The dot-separated `<path>` after the handle may be of arbitrary depth
+/// (e.g. `+alice.project4.admins`). Each dot is converted to a `/` to form
+/// the IPFS DAG sub-path: `/ipfs/<root_cid>/<handle>/<path…>`.
+///
+/// Fetches via `ipfs dag resolve` + `ipfs dag get` and deserialises as
+/// `Vec<String>`.
 pub async fn fetch_group_members(
     kubo_rpc_url: &str,
     group_ref: &str,
     root_cid: &str,
 ) -> Result<Vec<String>> {
     let without_prefix = group_ref
-        .strip_prefix("group:")
+        .strip_prefix(GROUP_PREFIX)
         .ok_or_else(|| anyhow::anyhow!("invalid group ref: {group_ref}"))?;
 
     // "handle.name" → "/ipfs/<root_cid>/handle/name"
@@ -250,47 +257,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn check_full_allow_via_allow_entry() {
+    async fn check_full_or_semantics() {
+        // Caller has "write"; asking for ["read", "write"] — first matching cap wins.
         use super::check_full;
-        let acl = m(&[("did:ma:alice", allow(&["read"]))]);
-        let result =
-            check_full(&acl, "did:ma:alice", &["read"], |_| async { Ok(vec![]) }).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn check_full_deny_wins_over_grant() {
-        use super::check_full;
-        let acl = m(&[
-            ("did:ma:alice", CapabilityEntry::Deny),
-            (
-                "read",
-                CapabilityEntry::Grant(vec!["did:ma:alice".to_string()]),
-            ),
-        ]);
-        let result =
-            check_full(&acl, "did:ma:alice", &["read"], |_| async { Ok(vec![]) }).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn check_full_grant_entry_allows_direct_did() {
-        use super::check_full;
-        let acl = m(&[(
-            "fortune",
-            CapabilityEntry::Grant(vec!["did:ma:alice".to_string()]),
-        )]);
-        let result =
-            check_full(&acl, "did:ma:alice", &["fortune"], |_| async { Ok(vec![]) }).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn check_full_or_semantics_first_cap_wins() {
-        use super::check_full;
-        let acl = m(&[("did:ma:alice", allow(&["special"]))]);
-        // "read" would fail, "special" should succeed.
-        let result = check_full(&acl, "did:ma:alice", &["read", "special"], |_| async {
+        let acl = m(&[("did:ma:alice", allow(&["write"]))]);
+        let result = check_full(&acl, "did:ma:alice", &["read", "write"], |_| async {
             Ok(vec![])
         })
         .await;
@@ -298,16 +269,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn check_full_group_expansion_allows() {
+    async fn check_full_direct_deny_beats_group_allow() {
+        // Alice is directly denied AND a member of an allow group — direct deny wins.
         use super::check_full;
-        let acl = m(&[(
-            "fortune",
-            CapabilityEntry::Grant(vec!["group:carlotta.friends".to_string()]),
-        )]);
+        let acl = m(&[
+            ("did:ma:alice", CapabilityEntry::Deny),
+            ("+carlotta.friends", allow(&["fortune"])),
+        ]);
         let result = check_full(&acl, "did:ma:alice", &["fortune"], |g| {
             let g = g.to_string();
             async move {
-                if g == "group:carlotta.friends" {
+                if g == "+carlotta.friends" {
+                    Ok(vec!["did:ma:alice".to_string()])
+                } else {
+                    Ok(vec![])
+                }
+            }
+        })
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn check_full_groups_accumulate_caps() {
+        // Alice is in two groups with different caps; she should have both.
+        use super::check_full;
+        let acl = m(&[
+            ("+project.readers", allow(&["read"])),
+            ("+project.writers", allow(&["write"])),
+        ]);
+        let resolve = |g: &str| {
+            let g = g.to_string();
+            async move { Ok(vec!["did:ma:alice".to_string()]) }
+        };
+        // Check read via readers group.
+        let r1 = check_full(&acl, "did:ma:alice", &["read"], resolve).await;
+        assert!(r1.is_ok());
+        // Check write via writers group.
+        let r2 = check_full(&acl, "did:ma:alice", &["write"], resolve).await;
+        assert!(r2.is_ok());
+        // Bob is not in any group.
+        let r3 = check_full(&acl, "did:ma:bob", &["read"], |_| async { Ok(vec![]) }).await;
+        assert!(r3.is_err());
+    }
+
+    #[tokio::test]
+    async fn check_full_deep_group_path() {
+        // Groups can have arbitrary depth: +alice.project4.admins
+        use super::check_full;
+        let acl = m(&[("+alice.project4.admins", allow(&["admin"]))]);
+        let result = check_full(&acl, "did:ma:alice", &["admin"], |g| {
+            let g = g.to_string();
+            async move {
+                if g == "+alice.project4.admins" {
                     Ok(vec!["did:ma:alice".to_string()])
                 } else {
                     Ok(vec![])
@@ -319,16 +333,85 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn check_full_group_expansion_denies_non_member() {
+    async fn check_full_allow_via_allow_entry() {
         use super::check_full;
-        let acl = m(&[(
-            "fortune",
-            CapabilityEntry::Grant(vec!["group:carlotta.friends".to_string()]),
-        )]);
-        let result = check_full(&acl, "did:ma:stranger", &["fortune"], |_| async {
-            Ok(vec!["did:ma:alice".to_string()])
+        let acl = m(&[("did:ma:alice", allow(&["read"]))]);
+        let result =
+            check_full(&acl, "did:ma:alice", &["read"], |_| async { Ok(vec![]) }).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn check_full_deny_wins_over_wildcard_allow() {
+        use super::check_full;
+        let acl = m(&[
+            ("*", allow(&["rpc", "ipfs"])),
+            ("did:ma:bandit", CapabilityEntry::Deny),
+        ]);
+        let result =
+            check_full(&acl, "did:ma:bandit", &["rpc"], |_| async { Ok(vec![]) }).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn check_full_group_allow() {
+        use super::check_full;
+        let acl = m(&[("+carlotta.friends", allow(&["fortune"]))]);
+        let result = check_full(&acl, "did:ma:alice", &["fortune"], |g| {
+            let g = g.to_string();
+            async move {
+                if g == "+carlotta.friends" {
+                    Ok(vec!["did:ma:alice".to_string()])
+                } else {
+                    Ok(vec![])
+                }
+            }
         })
         .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn check_full_group_deny() {
+        use super::check_full;
+        let acl = m(&[("+alice.enemies", CapabilityEntry::Deny)]);
+        let result = check_full(&acl, "did:ma:alice", &["fortune"], |g| {
+            let g = g.to_string();
+            async move {
+                if g == "+alice.enemies" {
+                    Ok(vec!["did:ma:alice".to_string()])
+                } else {
+                    Ok(vec![])
+                }
+            }
+        })
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn check_full_group_deny_wins_over_group_allow() {
+        use super::check_full;
+        let acl = m(&[
+            ("+alice.enemies", CapabilityEntry::Deny),
+            ("+alice.friends", allow(&["fortune"])),
+        ]);
+        // alice is in both groups — deny wins.
+        let result = check_full(&acl, "did:ma:alice", &["fortune"], |g| {
+            let _g = g.to_string();
+            async move { Ok(vec!["did:ma:alice".to_string()]) }
+        })
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn check_full_group_non_member_denied() {
+        use super::check_full;
+        let acl = m(&[("+carlotta.friends", allow(&["fortune"]))]);
+        let result =
+            check_full(&acl, "did:ma:stranger", &["fortune"], |_| async { Ok(vec![]) })
+                .await;
         assert!(result.is_err());
     }
 }

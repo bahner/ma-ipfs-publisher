@@ -104,6 +104,9 @@ pub fn new_entity_registry() -> EntityRegistry {
 // ── EntityPlugin ──────────────────────────────────────────────────────────────
 
 pub struct EntityPlugin {
+    /// Globally unique entity name (bare, no `#` prefix, no dots).
+    /// Matches the key in `RuntimeManifest.entities` and equals the DID fragment:
+    /// `did:ma:<ipns>#<fragment>` → lookup `entities[fragment]`.
     pub fragment: String,
     pub kind: PluginKind,
     /// ACL name string — resolved via `acls.<acl>` in the root manifest.

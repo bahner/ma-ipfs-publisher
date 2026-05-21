@@ -496,6 +496,7 @@ async fn main() -> Result<()> {
                             entity_registry: entity_registry.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
+                            root_acl: &acl,
                         },
                     )
                     .await
