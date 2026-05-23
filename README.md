@@ -73,7 +73,44 @@ Writes four random 32-byte keys encrypted with a random passphrase to:
 The passphrase is printed once — store it or set
 `MA_MA_SECRET_BUNDLE_PASSPHRASE` in the environment.
 
-### 2. Bootstrap entities and locales (optional)
+### 2. Minimal runtime (no bootstrap needed)
+
+On first start, if no `root_cid` is found in IPNS and none is given via
+`--root-cid`, the daemon automatically publishes a minimal `RuntimeManifest`
+to Kubo and uses it as the runtime head. This manifest contains:
+
+- `config.owners` — empty (no owner yet)
+- `acl` — absent (deny-all for all incoming transport until claimed)
+- `entities`, `kinds`, `i18n` — all empty
+
+The daemon is immediately functional for CRUD operations. To establish
+ownership, run `.my.ma:claim` from ego (or `POST /claim` with your DID).
+This updates the live transport ACL so you can issue RPC/CRUD requests.
+
+If claiming remotely is not practical, set owners directly in `config.yaml`
+or via `--owner` (repeatable) before starting the daemon:
+
+```yaml
+# ~/.config/ma/ma.yaml
+owners:
+  - did:ma:<your-ipns>
+  - did:ma:<another-ipns>
+```
+
+```sh
+ma --owner did:ma:<your-ipns> --owner did:ma:<another-ipns>
+```
+
+Owners listed this way are granted `["*"]` in the live transport ACL at
+startup, before any manifest ACL is loaded.
+
+To add a permanent ACL to the manifest:
+
+```
+@ma:acl: <cid>   # set an AclMap CID as the root transport-gate ACL
+```
+
+### 3. Bootstrap entities and locales (optional)
 
 Run once after Kubo is ready to set up the entity system:
 
@@ -201,11 +238,13 @@ ma --acl-file /etc/ma/acl.yaml --status-bind 0.0.0.0:5003
 7. Create iroh QUIC endpoint, register services.
 8. Build own DID document, spawn background publish to IPNS.
 9. Wait for Kubo readiness (10 attempts).
-10. Fetch locale from `RuntimeManifest.locales`; fall back to key names if unavailable.
-11. Load Wasm entity plugins from IPFS manifest.
-12. Start status HTTP server.
-13. Main event loop: drain RPC and IPFS inboxes every `poll_ms`.
-14. On `Ctrl-C`: save entity states to IPFS, update manifest CID in config, close endpoint.
+10. Resolve `root_cid` from `--root-cid` CLI or IPNS. If none found, publish a
+    minimal empty `RuntimeManifest` to Kubo and use that CID as the runtime head.
+11. Fetch locale from `RuntimeManifest.i18n`; fall back to key names if unavailable.
+12. Load Wasm entity plugins from IPFS manifest.
+13. Start status HTTP server.
+14. Main event loop: drain RPC and IPFS inboxes every `poll_ms`.
+15. On `Ctrl-C`: save entity states to IPFS, update manifest CID in config, close endpoint.
 
 ---
 

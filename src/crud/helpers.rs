@@ -79,7 +79,7 @@ pub(super) async fn current_root_cid(ctx: &CrudHandlerCtx<'_>) -> Result<String>
         .await
         .root_cid
         .clone()
-        .ok_or_else(|| anyhow!("no root_cid; run --gen-root-cid first"))
+        .ok_or_else(|| anyhow!("no manifest root CID available"))
 }
 
 /// Fetch and deserialise the current `RuntimeManifest` from IPFS.

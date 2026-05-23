@@ -321,7 +321,7 @@ pub struct EntityNode {
 /// Root IPLD node for this runtime.
 /// Stored as CID in `config.yaml` and published into the DID document under
 /// `ma.runtime`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeManifest {
     /// Transport-level ACL — IPLD link to an ACL document.
     /// Loaded once at startup. When absent, falls back to the YAML-based

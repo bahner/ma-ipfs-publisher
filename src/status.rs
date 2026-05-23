@@ -348,3 +348,56 @@ pub async fn grant_owners_in_acl(acl: &SharedAcl, owners: &[String]) {
         map.insert(owner.clone(), CapabilityEntry::Allow(wildcard.clone()));
     }
 }
+
+/// Publish a minimal `RuntimeManifest` to Kubo with an owner-only root ACL
+/// and `config.owners` set. Returns the resulting root CID.
+///
+/// Called once during `POST /claim` when no manifest exists yet.
+pub(crate) async fn bootstrap_minimal_manifest(
+    kubo_rpc_url: &str,
+    owners: &[String],
+) -> anyhow::Result<String> {
+    use crate::entity::{IpldLink, RuntimeManifest};
+    use anyhow::Context as _;
+    use ma_core::{AclMap, CapabilityEntry};
+    use std::collections::BTreeMap;
+
+    // Build owner-only ACL: each owner → ["*"], no wildcard entry.
+    let wildcard: std::collections::BTreeSet<String> = std::iter::once("*".to_string()).collect();
+    let mut acl_map = AclMap::new();
+    for owner in owners {
+        acl_map.insert(owner.clone(), CapabilityEntry::Allow(wildcard.clone()));
+    }
+
+    let acl_cid = crate::kubo::dag_put(kubo_rpc_url, &acl_map)
+        .await
+        .context("dag_put owner-only ACL")?;
+
+    // Build config with owners list.
+    let mut config: BTreeMap<String, serde_yaml::Value> = BTreeMap::new();
+    config.insert(
+        "owners".to_string(),
+        serde_yaml::Value::Sequence(
+            owners
+                .iter()
+                .map(|d| serde_yaml::Value::String(d.clone()))
+                .collect(),
+        ),
+    );
+
+    let manifest = RuntimeManifest {
+        acl: Some(IpldLink::new(&acl_cid)),
+        config,
+        ..Default::default()
+    };
+
+    let root_cid = crate::kubo::dag_put(kubo_rpc_url, &manifest)
+        .await
+        .context("dag_put minimal manifest")?;
+
+    crate::kubo::pin_add(kubo_rpc_url, &root_cid)
+        .await
+        .context("pinning minimal manifest")?;
+
+    Ok(root_cid)
+}

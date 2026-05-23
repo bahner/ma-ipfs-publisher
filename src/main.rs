@@ -271,7 +271,14 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to resolve runtime root CID from IPNS")?;
         if root_cid.is_none() {
-            warn!("No runtime root CID found in IPNS; starting as empty runtime");
+            warn!("No runtime root CID found in IPNS; bootstrapping minimal manifest");
+            match status::bootstrap_minimal_manifest(&config.kubo_rpc_url, &[]).await {
+                Ok(cid) => {
+                    info!(cid = %cid, "Minimal manifest bootstrapped");
+                    root_cid = Some(cid);
+                }
+                Err(e) => warn!(error = %format!("{e:#}"), "Failed to bootstrap minimal manifest"),
+            }
         }
     }
 
