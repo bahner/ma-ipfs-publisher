@@ -63,3 +63,12 @@ namespace-not-found = Namensraum nicht gefunden
 no-ns-gate-acl = Keine Gate-ACL für diesen Namensraum konfiguriert
 runtime-claim-persisted = Eigentümer in Konfiguration geschrieben.
 runtime-already-claimed = Runtime wurde bereits registriert.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Das Stamm-ACL muss einen +owners-Eintrag enthalten
+namespace-created = Namensraum erstellt
+namespace-already-exists = Namensraum existiert bereits
+namespace-name-reserved = Namensraumname ist reserviert
+namespace-create-denied = Namensraum erstellen: Zugriff verweigert
+namespace-create-usage = Verwendung: :create <Name>

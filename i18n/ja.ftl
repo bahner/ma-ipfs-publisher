@@ -63,3 +63,12 @@ namespace-not-found = 名前空間が見つかりません
 no-ns-gate-acl = この名前空間のゲート ACL が設定されていません
 runtime-claim-persisted = 所有者が設定に書き込まれました。
 runtime-already-claimed = Runtime はすでに登録されています。
+
+
+# Namespace creation (:create)
+acl-missing-owners = ルートACLには+ownersエントリが必要です
+namespace-created = ネームスペースが作成されました
+namespace-already-exists = ネームスペースはすでに存在します
+namespace-name-reserved = ネームスペース名は予約済みです
+namespace-create-denied = ネームスペース作成: アクセスが拒否されました
+namespace-create-usage = 使い方: :create <名前>

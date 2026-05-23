@@ -63,3 +63,12 @@ namespace-not-found = نیم اسپیس نہیں ملا
 no-ns-gate-acl = اس نیم اسپیس کے لیے گیٹ ACL ترتیب نہیں دیا گیا
 runtime-claim-persisted = مالک ترتیبات میں لکھا گیا۔
 runtime-already-claimed = Runtime پہلے سے رجسٹر ہے۔
+
+
+# Namespace creation (:create)
+acl-missing-owners = روٹ ACL میں +owners اندراج ہونا ضروری ہے
+namespace-created = نیم اسپیس بنایا گیا
+namespace-already-exists = نیم اسپیس پہلے سے موجود ہے
+namespace-name-reserved = نیم اسپیس کا نام محفوظ ہے
+namespace-create-denied = نیم اسپیس بنانا: رسائی سے انکار
+namespace-create-usage = استعمال: :create <نام>

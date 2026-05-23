@@ -59,7 +59,15 @@ runtime-claimed = Runtime claimed.
 # Protected root elements
 refuse-delete-root = Steadfastly refuse to delete required root element
 no-root-acl = No root ACL configured — runtime is operating without access control
+acl-missing-owners = Root ACL must contain a +owners entry
 namespace-not-found = Namespace not found
 no-ns-gate-acl = No gate ACL configured for this namespace
 runtime-claim-persisted = Owner written to config.
 runtime-already-claimed = Runtime already claimed.
+
+# Namespace creation (:create)
+namespace-created = Namespace created
+namespace-already-exists = Namespace already exists
+namespace-name-reserved = Reserved namespace name
+namespace-create-denied = Namespace create: access denied
+namespace-create-usage = Usage: :create <name>

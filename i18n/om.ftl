@@ -63,3 +63,12 @@ namespace-not-found = Maqaa iddoo hin argamne
 no-ns-gate-acl = Maqaa iddoo kanaaf ACL balbala hin qindaa'ne
 runtime-claim-persisted = Abbayyaan qindaa'ina irratti barreeffame.
 runtime-already-claimed = Runtime dursee galmeeffameera.
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL hundee +owners galmeessa qabaachuu qaba
+namespace-created = Namespace uumamee
+namespace-already-exists = Namespace dursaa jira
+namespace-name-reserved = Maqaa namespace kabirfame
+namespace-create-denied = Namespace uumuu: seenuu dhorkaame
+namespace-create-usage = Itti-fayyadama: :create <maqaa>

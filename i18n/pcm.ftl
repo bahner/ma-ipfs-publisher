@@ -63,3 +63,12 @@ namespace-not-found = Namespace no find
 no-ns-gate-acl = No gate ACL configured for dis namespace
 runtime-claim-persisted = Owner don write to config.
 runtime-already-claimed = Runtime don already claim.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Root ACL must get +owners entry
+namespace-created = Namespace don create
+namespace-already-exists = Namespace don dey already
+namespace-name-reserved = Namespace name don reserve
+namespace-create-denied = Namespace create: access deny
+namespace-create-usage = How to use: :create <name>

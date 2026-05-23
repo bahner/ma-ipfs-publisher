@@ -65,3 +65,12 @@ namespace-not-found = namespace na finyish wit
 no-ns-gate-acl = nating gate ACL fo dis namespace
 runtime-claim-persisted = jom winndirii saiti.
 runtime-already-claimed = runtime finyish faaɓinaa wanya.
+
+
+# Namespace creation (:create)
+acl-missing-owners = root ACL fod get +owners lede
+namespace-created = namespace bon-kreye
+namespace-already-exists = namespace jadu-la
+namespace-name-reserved = dat namespace nem a gonya
+namespace-create-denied = namespace tek-out: beshkaise owkwa-hamma
+namespace-create-usage = koman: :create <nem>

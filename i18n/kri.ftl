@@ -63,3 +63,12 @@ namespace-not-found = Namespace nor fine
 no-ns-gate-acl = Nor get gate ACL for dis namespace
 runtime-claim-persisted = Owner don write to config.
 runtime-already-claimed = Runtime don already claim.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Di root ACL fɔ get wan +owners entri
+namespace-created = Namespace don mek
+namespace-already-exists = Namespace don de oreddi
+namespace-name-reserved = Namespace nem don taken
+namespace-create-denied = Namespace kreshan: access deni
+namespace-create-usage = Aw fo yuz: :create <nem>

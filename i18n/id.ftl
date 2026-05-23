@@ -63,3 +63,12 @@ namespace-not-found = Namespace tidak ditemukan
 no-ns-gate-acl = ACL gate tidak dikonfigurasi untuk namespace ini
 runtime-claim-persisted = Pemilik ditulis ke konfigurasi.
 runtime-already-claimed = Runtime sudah terdaftar.
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL akar harus memuat entri +owners
+namespace-created = Ruang nama dibuat
+namespace-already-exists = Ruang nama sudah ada
+namespace-name-reserved = Nama ruang nama sudah dipesan
+namespace-create-denied = Pembuatan namespace: akses ditolak
+namespace-create-usage = Penggunaan: :create <nama>

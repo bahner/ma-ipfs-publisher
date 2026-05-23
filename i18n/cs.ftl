@@ -63,3 +63,12 @@ namespace-not-found = Jmenný prostor nenalezen
 no-ns-gate-acl = Pro tento jmenný prostor není nakonfigurován gate ACL
 runtime-claim-persisted = Vlastník zapsán do konfigurace.
 runtime-already-claimed = Runtime je již registrován.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Kořenový ACL musí obsahovat záznam +owners
+namespace-created = Jmenný prostor byl vytvořen
+namespace-already-exists = Jmenný prostor již existuje
+namespace-name-reserved = Název jmenného prostoru je vyhrazen
+namespace-create-denied = Vytvoření jmenného prostoru: přístup odepřen
+namespace-create-usage = Použití: :create <název>

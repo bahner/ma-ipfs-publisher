@@ -63,3 +63,12 @@ namespace-not-found = Nosaukumvieta nav atrasta
 no-ns-gate-acl = Šai nosaukumvietai nav konfigurēts gate-ACL
 runtime-claim-persisted = Īpašnieks ierakstīts konfigurācijā.
 runtime-already-claimed = Runtime jau ir reģistrēts.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Saknes ACL jāsatur +owners ieraksts
+namespace-created = Nosaukumvieta izveidota
+namespace-already-exists = Nosaukumvieta jau pastāv
+namespace-name-reserved = Nosaukumvietas nosaukums ir rezervēts
+namespace-create-denied = Nosaukumvietas izveide: piekļuve liegta
+namespace-create-usage = Lietošana: :create <nosaukums>

@@ -63,3 +63,12 @@ namespace-not-found = Nimiavaruutta ei löydy
 no-ns-gate-acl = Tälle nimiavaruudelle ei ole määritetty gate-ACL:ää
 runtime-claim-persisted = Omistaja kirjoitettu konfiguraatioon.
 runtime-already-claimed = Runtime on jo rekisteröity.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Juuri-ACL:ssa täytyy olla +owners-merkintä
+namespace-created = Nimiavaruus luotu
+namespace-already-exists = Nimiavaruus on jo olemassa
+namespace-name-reserved = Nimiavaruuden nimi on varattu
+namespace-create-denied = Nimiavaruuden luonti: pääsy kielletty
+namespace-create-usage = Käyttö: :create <nimi>

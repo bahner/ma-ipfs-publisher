@@ -63,3 +63,12 @@ namespace-not-found = Enweghị aha oghere
 no-ns-gate-acl = ACL ọnụ ụzọ na-atọgbue maka aha oghere a
 runtime-claim-persisted = Odeere nwe onye na nhazi.
 runtime-already-claimed = Ederewo runtime tupu ugbu a.
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL isi kwesịrị nwee ntinye +owners
+namespace-created = Ọ haziri namespace
+namespace-already-exists = Namespace adịlarị
+namespace-name-reserved = Aha namespace echekwara
+namespace-create-denied = Ịmepụta namespace: ọ jụrụ nnabata
+namespace-create-usage = Ojiji: :create <aha>

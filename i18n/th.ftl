@@ -63,3 +63,12 @@ namespace-not-found = ไม่พบ namespace
 no-ns-gate-acl = ไม่ได้กำหนดค่า ACL ของเกตสำหรับ namespace นี้
 runtime-claim-persisted = เขียนเจ้าของลงในการกำหนดค่าแล้ว
 runtime-already-claimed = runtime ลงทะเบียนแล้ว
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL รากต้องมีรายการ +owners
+namespace-created = สร้าง namespace แล้ว
+namespace-already-exists = namespace มีอยู่แล้ว
+namespace-name-reserved = ชื่อ namespace ถูกสงวนไว้
+namespace-create-denied = สร้าง namespace: ปฏิเสธการเข้าถึง
+namespace-create-usage = การใช้งาน: :create <ชื่อ>

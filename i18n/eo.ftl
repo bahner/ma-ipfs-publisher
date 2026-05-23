@@ -63,3 +63,12 @@ namespace-not-found = Nomspaco ne trovita
 no-ns-gate-acl = Neniu pordeja ACL agordita por ĉi tiu nomspaco
 runtime-claim-persisted = Posedanto registrita en agordo.
 runtime-already-claimed = Rultempo jam reklamita.
+
+
+# Namespace creation (:create)
+acl-missing-owners = La radika ACL devas enhavi +owners-eron
+namespace-created = Nomspaco kreita
+namespace-already-exists = Nomspaco jam ekzistas
+namespace-name-reserved = Nomspaca nomo estas rezervita
+namespace-create-denied = Kreado de nomspaco: aliro malakceptita
+namespace-create-usage = Uzado: :create <nomo>

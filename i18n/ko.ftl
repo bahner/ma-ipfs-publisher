@@ -63,3 +63,12 @@ namespace-not-found = 네임스페이스를 찾을 수 없습니다
 no-ns-gate-acl = 이 네임스페이스에 게이트 ACL이 구성되지 않았습니다
 runtime-claim-persisted = 소유자가 설정에 기록되었습니다.
 runtime-already-claimed = Runtime이 이미 등록되어 있습니다.
+
+
+# Namespace creation (:create)
+acl-missing-owners = 루트 ACL에는 +owners 항목이 있어야 합니다
+namespace-created = 네임스페이스가 생성되었습니다
+namespace-already-exists = 네임스페이스가 이미 존재합니다
+namespace-name-reserved = 네임스페이스 이름이 예약되어 있습니다
+namespace-create-denied = 네임스페이스 생성: 접근 거부됨
+namespace-create-usage = 사용법: :create <이름>

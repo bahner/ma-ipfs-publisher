@@ -63,3 +63,12 @@ namespace-not-found = Namnrymd ej hittad
 no-ns-gate-acl = Ingen gate-ACL konfigurerad för denna namnrymd
 runtime-claim-persisted = Ägare skriven till konfiguration.
 runtime-already-claimed = Runtime är redan registrerad.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Rot-ACL måste innehålla en +owners-post
+namespace-created = Namnrymd skapad
+namespace-already-exists = Namnrymd finns redan
+namespace-name-reserved = Namnrymdsnamnet är reserverat
+namespace-create-denied = Skapa namnrymd: åtkomst nekad
+namespace-create-usage = Användning: :create <namn>

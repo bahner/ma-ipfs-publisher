@@ -63,3 +63,12 @@ namespace-not-found = Không tìm thấy namespace
 no-ns-gate-acl = ACL cổng chưa được cấu hình cho namespace này
 runtime-claim-persisted = Chủ sở hữu đã được ghi vào cấu hình.
 runtime-already-claimed = Runtime đã được đăng ký rồi.
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL gốc phải chứa mục nhập +owners
+namespace-created = Namespace đã được tạo
+namespace-already-exists = Namespace đã tồn tại
+namespace-name-reserved = Tên namespace đã được đặt trước
+namespace-create-denied = Tạo namespace: từ chối truy cập
+namespace-create-usage = Cách dùng: :create <tên>

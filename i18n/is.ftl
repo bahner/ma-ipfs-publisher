@@ -63,3 +63,12 @@ namespace-not-found = Nafnasvæði finnst ekki
 no-ns-gate-acl = Engin gate-ACL stillt fyrir þetta nafnasvæði
 runtime-claim-persisted = Eigandi skrifaður í stillingar.
 runtime-already-claimed = Runtime er þegar skráð.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Rótarheimild verður að innihalda +owners-færslu
+namespace-created = Nafnrými búið til
+namespace-already-exists = Nafnrými er þegar til
+namespace-name-reserved = Nafn nafnrýmis er frátekið
+namespace-create-denied = Stofnun nafnrýmis: aðgangur hafnað
+namespace-create-usage = Notkun: :create <nafn>

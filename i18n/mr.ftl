@@ -63,3 +63,12 @@ namespace-not-found = नेमस्पेस सापडले नाही
 no-ns-gate-acl = या नेमस्पेससाठी गेट ACL कॉन्फिगर नाही
 runtime-claim-persisted = मालक कॉन्फिगरेशनमध्ये लिहिला.
 runtime-already-claimed = Runtime आधीच नोंदवले आहे.
+
+
+# Namespace creation (:create)
+acl-missing-owners = मूळ ACL मध्ये +owners प्रविष्टी असणे आवश्यक आहे
+namespace-created = नेमस्पेस तयार केले
+namespace-already-exists = नेमस्पेस आधीच अस्तित्वात आहे
+namespace-name-reserved = नेमस्पेसचे नाव राखीव आहे
+namespace-create-denied = नेमस्पेस तयार करणे: प्रवेश नाकारला
+namespace-create-usage = वापर: :create <नाव>

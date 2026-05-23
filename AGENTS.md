@@ -351,6 +351,11 @@ substitutions — all runtime keys are plain declarative log messages with no
 - **When adding or changing any logged string**, update `lang/en.ftl` first,
   then add/update the same key in every `lang/*.ftl` file that exists.
   Never leave a key missing from any locale file.
+- **NEVER copy English text into non-English locale files.** Every non-`en.ftl`
+  file must have a genuine translation for every key. English text in a
+  non-English `.ftl` file is worse than a missing key (which falls back to the
+  key name string); it silently misleads users who do not read English.
+  Translate properly or leave the key absent — never paste the English value.
 
 ### `lang-name` key
 

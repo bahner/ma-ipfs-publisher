@@ -63,3 +63,12 @@ namespace-not-found = Espas nem i no painim
 no-ns-gate-acl = I no gat get ACL i putim bilong dispela espas nem
 runtime-claim-persisted = Ona i raitim long konfigurasion.
 runtime-already-claimed = Runtime i klemim pinis.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Rut ACL i mas gat +owners bilong em
+namespace-created = Espas nem i klia pinis
+namespace-already-exists = Espas nem i stap pinis
+namespace-name-reserved = Nem bilong espas nem i bokisim pinis
+namespace-create-denied = Mekim espas nem: no privilidzis
+namespace-create-usage = Yusim: :create <nem>

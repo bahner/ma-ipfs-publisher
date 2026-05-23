@@ -63,3 +63,12 @@ namespace-not-found = 未找到命名空间
 no-ns-gate-acl = 此命名空间未配置网关 ACL
 runtime-claim-persisted = 所有者已写入配置。
 runtime-already-claimed = Runtime 已注册。
+
+
+# Namespace creation (:create)
+acl-missing-owners = 根 ACL 必须包含 +owners 条目
+namespace-created = 命名空间已创建
+namespace-already-exists = 命名空间已存在
+namespace-name-reserved = 命名空间名称已被保留
+namespace-create-denied = 创建命名空间：访问被拒绝
+namespace-create-usage = 用法：:create <名称>

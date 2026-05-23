@@ -63,3 +63,12 @@ namespace-not-found = Spasu di nomi ka atxadu
 no-ns-gate-acl = Nenhun ACL di portason konfiguradu pa esi spasu di nomi
 runtime-claim-persisted = Proprietáriu skrividu na konfigurason.
 runtime-already-claimed = Runtime ja reklamadu.
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL raiz ten di ter un entrada +owners
+namespace-created = Namespace kriadu
+namespace-already-exists = Namespace ja ta la
+namespace-name-reserved = Nomi di namespace ta reservadu
+namespace-create-denied = Kriason di namespace: azesu ngadu
+namespace-create-usage = Uzu: :create <nomi>

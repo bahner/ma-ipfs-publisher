@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
 use tracing::{debug, info};
 
-use crate::acl::{AclCache, AclMap};
+use crate::acl::{AclCache, AclMap, OWNERS_PRINCIPAL};
 use crate::entity::{IpldLink, NamespaceNode};
 
 use super::helpers::{
@@ -364,6 +364,9 @@ pub(super) async fn handle_root_acl(
             let acl_map = crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid)
                 .await
                 .with_context(|| format!("loading root ACL from {cid}"))?;
+            if !acl_map.contains_key(OWNERS_PRINCIPAL) {
+                return send_crud_i18n_error(message, reply_type, ctx, "acl-missing-owners").await;
+            }
             let new_root = with_manifest_crud(ctx, |m| {
                 m.acl = Some(IpldLink::new(&cid));
                 Ok(())
@@ -381,6 +384,9 @@ pub(super) async fn handle_root_acl(
             let acl_map: AclMap = crate::kubo::dag_get(ctx.kubo_rpc_url, &cid)
                 .await
                 .with_context(|| format!("loading updated root ACL from {cid}"))?;
+            if !acl_map.contains_key(OWNERS_PRINCIPAL) {
+                return send_crud_i18n_error(message, reply_type, ctx, "acl-missing-owners").await;
+            }
             let new_root = with_manifest_crud(ctx, |m| {
                 m.acl = Some(IpldLink::new(&cid));
                 Ok(())

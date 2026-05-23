@@ -4,6 +4,7 @@
 //! in the runtime manifest tree.  See `ma-spec/ma-crud-service-v1.md`.
 
 mod config;
+mod create;
 mod entities;
 mod helpers;
 mod kinds;
@@ -108,6 +109,7 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_
         }
         "kinds" => kinds::handle_kinds_ns(message, &rest, tail, args, reply_type, ctx).await,
         "config" => config::handle_config_ns(message, &rest, tail, args, reply_type, ctx).await,
+        "create" => create::handle_create_ns(message, tail, args, reply_type, ctx).await,
         "acl" => namespaces::handle_root_acl(message, tail, args, reply_type, ctx).await,
         other => {
             namespaces::handle_namespace_op(message, other, &rest, tail, args, reply_type, ctx)

@@ -63,3 +63,12 @@ namespace-not-found = I-namespace ayifumaneki
 no-ns-gate-acl = I-ACL yesango ayihonjiswa kulo i-namespace
 runtime-claim-persisted = Umninimzi ubhalwe kumalungiselelo.
 runtime-already-claimed = I-runtime seyibhaliswe.
+
+
+# Namespace creation (:create)
+acl-missing-owners = I-ACL yengcambu kufuneka ibe ne-+owners entry
+namespace-created = I-namespace yenziwe
+namespace-already-exists = I-namespace ikhona kakade
+namespace-name-reserved = Igama le-namespace ligcinelwe
+namespace-create-denied = Ukwenza i-namespace: ukufikelela kwenqiwe
+namespace-create-usage = Ukusetyenziswa: :create <igama>

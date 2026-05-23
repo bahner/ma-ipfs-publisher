@@ -63,3 +63,12 @@ namespace-not-found = Tsy hita ny namespace
 no-ns-gate-acl = Tsy voapetraka ny ACL vavahady ho an'ity namespace ity
 runtime-claim-persisted = Voasoratra tao amin'ny fanakianana ny tompon'andraikitra.
 runtime-already-claimed = Efa voasoratra ny runtime.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Ny ACL fototra dia tsy maintsy misy +owners
+namespace-created = Namespace noforonina
+namespace-already-exists = Efa misy ny namespace
+namespace-name-reserved = Ny anarana namespace voatokana
+namespace-create-denied = Famoronana namespace: toherana ny fidirana
+namespace-create-usage = Fampiasana: :create <anarana>

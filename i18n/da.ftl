@@ -63,3 +63,12 @@ namespace-not-found = Navnerum ikke fundet
 no-ns-gate-acl = Ingen gate-ACL konfigureret for dette navnerum
 runtime-claim-persisted = Ejer skrevet til konfiguration.
 runtime-already-claimed = Runtime er allerede registreret.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Rod-ACL skal indeholde en +owners-post
+namespace-created = Navnerum oprettet
+namespace-already-exists = Navnerum eksisterer allerede
+namespace-name-reserved = Navnerumsnavn er reserveret
+namespace-create-denied = Navnerum oprettelse: adgang nægtet
+namespace-create-usage = Brug: :create <navn>

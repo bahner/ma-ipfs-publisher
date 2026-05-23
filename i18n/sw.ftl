@@ -63,3 +63,12 @@ namespace-not-found = Nafasijalina haikupatikana
 no-ns-gate-acl = ACL ya lango haijasanidiwa kwa nafasijalina hii
 runtime-claim-persisted = Mmiliki ameandikwa kwenye usanidi.
 runtime-already-claimed = Runtime tayari imesajiliwa.
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL ya msingi lazima iwe na ingizo la +owners
+namespace-created = Nafasi ya jina imeundwa
+namespace-already-exists = Nafasi ya jina tayari ipo
+namespace-name-reserved = Jina la nafasi ya jina limetengwa
+namespace-create-denied = Uundaji wa nafasi ya jina: ufikiaji umekataliwa
+namespace-create-usage = Matumizi: :create <jina>

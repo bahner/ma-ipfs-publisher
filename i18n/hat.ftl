@@ -63,3 +63,12 @@ namespace-not-found = Espas non pa jwenn
 no-ns-gate-acl = Pa gen ACL pòtay konfigiwe pou espas non sa
 runtime-claim-persisted = Pwopriyetè ekri nan konfigirasyon.
 runtime-already-claimed = Runtime deja reklame.
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL rasin an dwe gen yon antre +owners
+namespace-created = Espas non kreye
+namespace-already-exists = Espas non deja egziste
+namespace-name-reserved = Non espas non rezève
+namespace-create-denied = Kreye espas non: aksè refize
+namespace-create-usage = Itilizasyon: :create <non>

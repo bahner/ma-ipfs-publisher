@@ -63,3 +63,12 @@ namespace-not-found = Ba a sami namespace ba
 no-ns-gate-acl = Ba a saita ACL na kofar shiga don wannan namespace ba
 runtime-claim-persisted = An rubuta mai shi zuwa saiti.
 runtime-already-claimed = An riga an yi rajistar runtime.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Tushen ACL dole ne ya ƙunshi shigar +owners
+namespace-created = Sunan sarari ya kasance
+namespace-already-exists = Sunan sarari ya riga ya kasance
+namespace-name-reserved = Sunan sarari an ware shi
+namespace-create-denied = Ƙirƙirar sarari: an hana samun dama
+namespace-create-usage = Amfani: :create <suna>

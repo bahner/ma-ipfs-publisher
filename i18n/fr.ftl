@@ -63,3 +63,12 @@ namespace-not-found = Espace de noms introuvable
 no-ns-gate-acl = Aucune ACL de passerelle configurée pour cet espace de noms
 runtime-claim-persisted = Propriétaire écrit dans la configuration.
 runtime-already-claimed = Runtime déjà enregistré.
+
+
+# Namespace creation (:create)
+acl-missing-owners = L'ACL racine doit contenir une entrée +owners
+namespace-created = Espace de noms créé
+namespace-already-exists = L'espace de noms existe déjà
+namespace-name-reserved = Nom d'espace de noms réservé
+namespace-create-denied = Création d'espace de noms: accès refusé
+namespace-create-usage = Utilisation: :create <nom>

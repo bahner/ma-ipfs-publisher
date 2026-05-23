@@ -63,3 +63,12 @@ namespace-not-found = Namespace nuh find
 no-ns-gate-acl = No gate ACL fi dis namespace
 runtime-claim-persisted = Owner write to config in Zion.
 runtime-already-claimed = Runtime already claim.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Root ACL haffi have +owners entry
+namespace-created = Namespace born inna dis livity
+namespace-already-exists = Namespace already deh inna dis realm
+namespace-name-reserved = Dat namespace name is irie an reserved
+namespace-create-denied = Namespace creation: Babylon nah allow dis
+namespace-create-usage = Riddim: :create <name>

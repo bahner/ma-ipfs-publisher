@@ -63,3 +63,12 @@ namespace-not-found = Namnerommet vart ikkje funne
 no-ns-gate-acl = Ingen port-ACL er konfigurert for dette namnerommet
 runtime-claim-persisted = Eigar skrive til konfigurasjon.
 runtime-already-claimed = Runtime er allereie registrert.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Rot-ACL-en må innehalda ein +owners-oppføring
+namespace-created = Namnerom oppretta
+namespace-already-exists = Namnerommet eksisterer allereie
+namespace-name-reserved = Reservert namneromnamn
+namespace-create-denied = Namnerom oppretting: tilgang nekta
+namespace-create-usage = Bruk: :create <namn>

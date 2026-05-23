@@ -63,3 +63,12 @@ namespace-not-found = Imenski prostor ni najden
 no-ns-gate-acl = Za ta imenski prostor ni konfiguriran gate ACL
 runtime-claim-persisted = Lastnik zapisan v konfiguracijo.
 runtime-already-claimed = Runtime je že registriran.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Korenski ACL mora vsebovati vnos +owners
+namespace-created = Imenski prostor ustvarjen
+namespace-already-exists = Imenski prostor že obstaja
+namespace-name-reserved = Ime imenskega prostora je rezervirano
+namespace-create-denied = Ustvarjanje imenskega prostora: dostop zavrnjen
+namespace-create-usage = Uporaba: :create <ime>

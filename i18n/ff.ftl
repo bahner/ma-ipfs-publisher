@@ -63,3 +63,12 @@ namespace-not-found = Innde-boowal heɓaaki
 no-ns-gate-acl = ACL damal nalitaake innde-boowal nde
 runtime-claim-persisted = Jom winndirii maantol.
 runtime-already-claimed = Runtime faaɓinaa ɗoon hannde.
+
+
+# Namespace creation (:create)
+acl-missing-owners = ACL heeritagal ngal foti yoɓde ɗemngal +owners
+namespace-created = Namespace jibinaa
+namespace-already-exists = Namespace on jowitaama
+namespace-name-reserved = Innde namespace ndee yowitaama
+namespace-create-denied = Jaɓirgol namespace: waɗaaɗo
+namespace-create-usage = Golle: :create <innde>

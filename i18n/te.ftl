@@ -63,3 +63,12 @@ namespace-not-found = namespace కనుగొనబడలేదు
 no-ns-gate-acl = ఈ namespace కు గేట్ ACL కాన్ఫిగర్ చేయబడలేదు
 runtime-claim-persisted = యజమాని కాన్ఫిగరేషన్‌లో వ్రాయబడ్డారు.
 runtime-already-claimed = Runtime ఇప్పటికే నమోదు చేయబడింది.
+
+
+# Namespace creation (:create)
+acl-missing-owners = రూట్ ACL లో +owners ఎంట్రీ ఉండాలి
+namespace-created = namespace సృష్టించబడింది
+namespace-already-exists = namespace ఇప్పటికే ఉంది
+namespace-name-reserved = namespace పేరు రిజర్వు చేయబడింది
+namespace-create-denied = namespace సృష్టి: యాక్సెస్ నిరాకరించబడింది
+namespace-create-usage = వాడకం: :create <పేరు>

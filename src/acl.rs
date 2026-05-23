@@ -9,6 +9,12 @@ pub use ma_core::{
     normalize_principal, AclMap, CapabilityEntry, CAP_CRUD, CAP_IPFS, CAP_RPC, GROUP_PREFIX,
 };
 
+/// The group principal that must always be present in the root transport-gate ACL.
+///
+/// Removing this entry is rejected by the CRUD handler so that the owners
+/// group cannot inadvertently lose access to the runtime.
+pub const OWNERS_PRINCIPAL: &str = "+owners";
+
 /// In-memory cache of named ACLs.
 ///
 /// Key conventions:

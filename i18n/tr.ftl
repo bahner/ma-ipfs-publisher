@@ -63,3 +63,12 @@ namespace-not-found = Ad alanı bulunamadı
 no-ns-gate-acl = Bu ad alanı için kapı ACL'si yapılandırılmamış
 runtime-claim-persisted = Sahip yapılandırmaya yazıldı.
 runtime-already-claimed = Runtime zaten kayıtlı.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Kök ACL bir +owners girdisi içermelidir
+namespace-created = Ad alanı oluşturuldu
+namespace-already-exists = Ad alanı zaten mevcut
+namespace-name-reserved = Ad alanı adı ayrılmış
+namespace-create-denied = Ad alanı oluşturma: erişim reddedildi
+namespace-create-usage = Kullanım: :create <ad>

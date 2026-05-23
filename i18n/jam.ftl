@@ -63,3 +63,12 @@ namespace-not-found = Namespace nuh find
 no-ns-gate-acl = No gate ACL configure fi dis namespace
 runtime-claim-persisted = Owner write to config.
 runtime-already-claimed = Runtime already claim.
+
+
+# Namespace creation (:create)
+acl-missing-owners = Di root ACL haffi have wan +owners entry
+namespace-created = Namespace mek
+namespace-already-exists = Namespace deh deh already
+namespace-name-reserved = Namespace name taken already
+namespace-create-denied = Namespace create: access deny
+namespace-create-usage = How fi use: :create <name>
