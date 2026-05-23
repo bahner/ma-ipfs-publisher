@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
-use ma_core::{Did, DidDocumentResolver, IpfsGatewayResolver, Ipld};
+use ma_core::{Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, CONTENT_TYPE_TERM};
 use tracing::{info, warn};
 
 use crate::entity::{EntityNode, RuntimeManifest};
@@ -236,7 +236,7 @@ pub(super) async fn send_crud_reply(
     ctx: &CrudHandlerCtx<'_>,
     content: &[u8],
 ) -> Result<()> {
-    send_crud_reply_raw(incoming, reply_type, ctx, "application/cbor", content).await
+    send_crud_reply_raw(incoming, reply_type, ctx, CONTENT_TYPE_TERM, content).await
 }
 
 async fn send_crud_reply_raw(

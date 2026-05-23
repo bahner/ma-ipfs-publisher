@@ -14,7 +14,7 @@ use cid::Cid;
 use clap::Parser;
 use ma_core::config::{Config, MaArgs, SecretBundle};
 use ma_core::ipfs::IpfsDidPublisher;
-use ma_core::{ipns_from_secret, IpfsGatewayResolver, Ipld, ReplayGuard, IPFS_PROTOCOL_ID};
+use ma_core::{ipns_from_secret, Ipld, ReplayGuard, IPFS_PROTOCOL_ID};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -560,14 +560,7 @@ async fn main() -> Result<()> {
     );
 
     // ── Shared DID document resolver (cached, TTL configurable) ─────────────
-    let did_resolver_pos_ttl = get_u64_setting(&config, "did_resolver_positive_ttl_secs", 300);
-    let did_resolver_neg_ttl = get_u64_setting(&config, "did_resolver_negative_ttl_secs", 30);
-    let shared_resolver = Arc::new(
-        IpfsGatewayResolver::new(&config.kubo_rpc_url).with_cache_ttls(
-            Duration::from_secs(did_resolver_pos_ttl),
-            Duration::from_secs(did_resolver_neg_ttl),
-        ),
-    );
+    let shared_resolver = Arc::new(config.ipfs_gateway_resolver());
 
     // ── Shared daemon config (enables runtime RPC writes + config.yaml save-back) ──
     let shared_config: std::sync::Arc<tokio::sync::RwLock<Config>> =

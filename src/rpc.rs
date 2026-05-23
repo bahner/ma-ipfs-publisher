@@ -5,7 +5,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
 use ma_core::{
-    ipfs_add, Did, IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
+    ipfs_add, Did, IpfsGatewayResolver, SigningKey, CONTENT_TYPE_TERM, MESSAGE_TYPE_RPC,
+    MESSAGE_TYPE_RPC_REPLY,
 };
 use tracing::{debug, info, warn};
 
@@ -282,7 +283,7 @@ async fn send_rpc_reply(
     ctx: &RpcHandlerCtx<'_>,
     content: Vec<u8>,
 ) -> Result<()> {
-    send_rpc_reply_typed(incoming, ctx, "application/cbor", &content).await
+    send_rpc_reply_typed(incoming, ctx, CONTENT_TYPE_TERM, &content).await
 }
 
 async fn send_rpc_reply_typed(

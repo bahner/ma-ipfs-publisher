@@ -59,4 +59,5 @@ publish: $(BINARY)
 	scp $(BINARY) $(PUBLISH)
 
 distclean: clean
+	rm -rf target
 	rm -rf Cargo.lock src/i18n.yaml
