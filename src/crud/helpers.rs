@@ -227,7 +227,16 @@ pub(super) async fn send_crud_reply_yaml(
     ctx: &CrudHandlerCtx<'_>,
     yaml: &str,
 ) -> Result<()> {
-    send_crud_reply_raw(incoming, reply_type, ctx, "text/yaml", yaml.as_bytes()).await
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(
+        &CborValue::Array(vec![
+            CborValue::Text(":ok".to_string()),
+            CborValue::Text(yaml.to_string()),
+        ]),
+        &mut out,
+    )
+    .context("encoding [:ok, yaml] edit reply")?;
+    send_crud_reply(incoming, reply_type, ctx, &out).await
 }
 
 pub(super) async fn send_crud_reply(

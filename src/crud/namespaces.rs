@@ -7,7 +7,7 @@ use crate::entity::{IpldLink, NamespaceNode};
 
 use super::helpers::{
     acl_cache_update, current_root_cid, load_manifest, send_crud_error, send_crud_i18n_error,
-    send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
+    send_crud_ok_cid, send_crud_reply_cbor, send_crud_reply_yaml, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -350,11 +350,7 @@ pub(super) async fn handle_root_acl(
                         crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &link.cid).await?;
                     let yaml =
                         serde_yaml::to_string(&acl_map).context("serialising root ACL as YAML")?;
-                    let cbor = CborValue::Array(vec![
-                        CborValue::Text(":ok".to_string()),
-                        CborValue::Text(yaml),
-                    ]);
-                    send_crud_reply_cbor(message, reply_type, ctx, &cbor).await
+                    send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
                 }
                 None => send_crud_i18n_error(message, reply_type, ctx, "no-root-acl").await,
             }

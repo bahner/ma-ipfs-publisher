@@ -16,10 +16,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::acl::{AclMap, OWNERS_PRINCIPAL};
-use ma_core::CapabilityEntry;
 use crate::entity::{EntityNode, IpldLink, KindNode, KindTree, PluginKind, RuntimeManifest};
 use crate::kubo;
 use crate::plugin;
+use ma_core::CapabilityEntry;
 
 // ── YAML bootstrap schema ─────────────────────────────────────────────────────
 
