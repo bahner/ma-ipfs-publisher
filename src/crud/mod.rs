@@ -64,26 +64,26 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_
 
     match message.message_type.as_str() {
         MESSAGE_TYPE_CRUD_GET => {
-            path_owned = helpers::decode_path_atom(&message.content)?;
+            path_owned = helpers::decode_path_atom(&message.payload())?;
             tail_owned = None;
             args = vec![];
             reply_type = MESSAGE_TYPE_CRUD_GET_REPLY;
         }
         MESSAGE_TYPE_CRUD_EDIT => {
-            path_owned = helpers::decode_path_atom(&message.content)?;
+            path_owned = helpers::decode_path_atom(&message.payload())?;
             tail_owned = Some("edit".to_string());
             args = vec![];
             reply_type = MESSAGE_TYPE_CRUD_EDIT_REPLY;
         }
         MESSAGE_TYPE_CRUD_SET => {
-            let (p, v) = helpers::decode_set_payload(&message.content)?;
+            let (p, v) = helpers::decode_set_payload(&message.payload())?;
             path_owned = p;
             tail_owned = Some(String::new());
             args = vec![v];
             reply_type = MESSAGE_TYPE_CRUD_SET_REPLY;
         }
         MESSAGE_TYPE_CRUD_DELETE => {
-            path_owned = helpers::decode_path_atom(&message.content)?;
+            path_owned = helpers::decode_path_atom(&message.payload())?;
             tail_owned = Some(String::new());
             args = vec![];
             reply_type = MESSAGE_TYPE_CRUD_DELETE_REPLY;
