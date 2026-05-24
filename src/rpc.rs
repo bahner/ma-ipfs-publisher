@@ -5,8 +5,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
 use ma_core::{
-    ipfs_add, Did, IpfsGatewayResolver, SigningKey, CONTENT_TYPE_TERM, MESSAGE_TYPE_RPC,
-    MESSAGE_TYPE_RPC_REPLY,
+    ipfs_add, Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, SigningKey, CONTENT_TYPE_TERM,
+    MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
 };
 use tracing::{debug, info, warn};
 
@@ -84,8 +84,7 @@ pub async fn handle_rpc_message(
     let ping_text = match &term {
         CborValue::Text(s) => s.as_str(),
         _ => {
-            return send_rpc_error_reply(message, ctx, "unfragmented RPC must be a text atom")
-                .await;
+            return send_rpc_i18n_error(message, ctx, "rpc-not-text-atom").await;
         }
     };
     if ping_text == ":ping" {
@@ -95,7 +94,7 @@ pub async fn handle_rpc_message(
             .context("encode :pong")?;
         return send_rpc_reply(message, ctx, pong).await;
     }
-    send_rpc_error_reply(message, ctx, &format!("unknown RPC verb: {ping_text}")).await
+    send_rpc_i18n_error(message, ctx, "rpc-unknown-verb").await
 }
 
 // ── Fragment extraction ────────────────────────────────────────────────────────
@@ -325,6 +324,31 @@ async fn send_rpc_reply_typed(
         }
     }
     Ok(())
+}
+
+/// Resolve the caller's preferred language from their DID document.
+/// Falls back to the runtime's own language on any error.
+async fn rpc_caller_lang(from: &str, ctx: &RpcHandlerCtx<'_>) -> String {
+    if let Ok(doc) = ctx.resolver.resolve(from).await {
+        if let Some(Ipld::Map(ma)) = &doc.ma {
+            if let Some(Ipld::String(lang)) = ma.get("lang") {
+                if crate::i18n::has_lang(lang) {
+                    return lang.clone();
+                }
+            }
+        }
+    }
+    crate::i18n::runtime_lang()
+}
+
+/// Send an RPC error reply with the message localised to the caller's language.
+async fn send_rpc_i18n_error(
+    incoming: &ma_core::Message,
+    ctx: &RpcHandlerCtx<'_>,
+    key: &str,
+) -> Result<()> {
+    let lang = rpc_caller_lang(&incoming.from, ctx).await;
+    send_rpc_error_reply(incoming, ctx, &crate::i18n::t_lang(&lang, key)).await
 }
 
 async fn send_rpc_error_reply(

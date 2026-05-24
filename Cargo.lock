@@ -2808,8 +2808,6 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 [[package]]
 name = "ma-core"
 version = "0.10.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f565a498d9b38bb4375b82dc2365223e3ce206620be9fbaedf2a05986ead3df4"
 dependencies = [
  "anyhow",
  "argon2",

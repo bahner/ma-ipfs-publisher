@@ -38,6 +38,33 @@ pub(super) fn decode_path_atom(content: &[u8]) -> Result<String> {
     }
 }
 
+/// Decode a CRUD edit payload.
+///
+/// Two forms are accepted:
+/// - Plain text atom `":path"` → open-for-edit request; returns `(path, None)`.
+/// - Two-element array `[":path", bytes]` → save-with-bytes; returns `(path, Some(bytes))`.
+pub(super) fn decode_edit_payload(content: &[u8]) -> Result<(String, Option<Vec<u8>>)> {
+    let val: CborValue =
+        ciborium::de::from_reader(content).context("invalid CBOR in CRUD edit payload")?;
+    match val {
+        CborValue::Text(path) => Ok((path, None)),
+        CborValue::Array(mut items) if items.len() == 2 => {
+            let bytes_val = items.pop().expect("len==2");
+            let path_cbor = items.pop().expect("len==2");
+            let CborValue::Text(path) = path_cbor else {
+                return Err(anyhow!("CRUD edit path must be a CBOR text string"));
+            };
+            let CborValue::Bytes(bytes) = bytes_val else {
+                return Err(anyhow!("CRUD edit save payload second element must be bytes"));
+            };
+            Ok((path, Some(bytes)))
+        }
+        _ => Err(anyhow!(
+            "CRUD edit payload must be a text atom or [atom, bytes] array"
+        )),
+    }
+}
+
 /// Decode `[path_atom, value]` from a crud-set payload.
 pub(super) fn decode_set_payload(content: &[u8]) -> Result<(String, CborValue)> {
     let val: CborValue =

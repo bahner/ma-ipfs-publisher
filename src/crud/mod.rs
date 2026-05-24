@@ -71,9 +71,14 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_
             reply_type = MESSAGE_TYPE_CRUD_GET_REPLY;
         }
         MESSAGE_TYPE_CRUD_EDIT => {
-            path_owned = helpers::decode_path_atom(&message.payload())?;
+            let (path, maybe_bytes) = helpers::decode_edit_payload(&message.payload())?;
+            path_owned = path;
             tail_owned = Some("edit".to_string());
-            args = vec![];
+            args = if let Some(bytes) = maybe_bytes {
+                vec![CborValue::Bytes(bytes)]
+            } else {
+                vec![]
+            };
             reply_type = MESSAGE_TYPE_CRUD_EDIT_REPLY;
         }
         MESSAGE_TYPE_CRUD_SET => {

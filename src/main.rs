@@ -669,9 +669,21 @@ async fn main() -> Result<()> {
                 // Drain /ma/crud/0.0.1
                 if let Some(ref mut crud_inbox) = crud_messages {
                     while let Some(mut message) = crud_inbox.pop(now) {
+                        info!(
+                            from = %message.from,
+                            to = %message.to,
+                            id = %message.id,
+                            message_type = %message.message_type,
+                            "{}", i18n::t("crud-message-received")
+                        );
+                        // Snapshot the ACL and drop the read guard *before* the
+                        // await. handle_crud_message may acquire a write lock on
+                        // the same SharedAcl (e.g. :acl: edit-save), and holding
+                        // a read guard across that await would deadlock.
+                        let acl_snapshot = acl.read().await.clone();
                         if let Err(err) = crud::handle_crud_message(
                             &message,
-                            &*acl.read().await,
+                            &acl_snapshot,
                             &crud::CrudHandlerCtx {
                                 our_did: &our_did,
                                 signing_key: &signing_key,
@@ -748,7 +760,13 @@ async fn main() -> Result<()> {
     }
 
     info!("{}", i18n::t("closing-endpoint"));
-    endpoint.close().await;
+    if tokio::time::timeout(Duration::from_secs(5), endpoint.close())
+        .await
+        .is_err()
+    {
+        warn!("endpoint close timed out after 5 s, forcing exit");
+        std::process::exit(0);
+    }
     info!("{}", i18n::t("shutdown-complete"));
     Ok(())
 }
