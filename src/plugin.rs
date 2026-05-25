@@ -12,6 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use crate::entity::{CastInput, EntityNode, PluginKind, ReplyRequest, SendEnvelope};
+use crate::schedule::{encode_cbor_call_cbor, parse_duration, ScheduleRequest};
 
 // ── Host functions ────────────────────────────────────────────────────────────
 
@@ -67,6 +68,83 @@ impl StateCtx {
     }
 }
 
+// `ma_schedule_cron` host function: plugin queues a recurring cron schedule.
+// Input is CBOR-encoded `{ "spec": "…", "verb": "…", "args": […] }`.
+#[derive(serde::Deserialize)]
+struct CronScheduleInput {
+    spec: String,
+    verb: String,
+    #[serde(default)]
+    args: Vec<ciborium::Value>,
+}
+host_fn!(ma_schedule_cron_fn(user_data: Vec<ScheduleRequest>; input: Vec<u8>) -> Vec<u8> {
+    let req: CronScheduleInput = from_cbor_bytes(&input)?;
+    let content = encode_cbor_call_cbor(&req.verb, &req.args);
+    user_data.get()?.lock().unwrap().push(ScheduleRequest::Cron {
+        spec: req.spec,
+        content,
+    });
+    Ok(Vec::new())
+});
+
+// `ma_schedule_at` host function: plugin queues a one-shot schedule.
+// Input is CBOR-encoded `{ "timestamp_ms": N, "verb": "…", "args": […] }`.
+#[derive(serde::Deserialize)]
+struct AtScheduleInput {
+    timestamp_ms: i64,
+    verb: String,
+    #[serde(default)]
+    args: Vec<ciborium::Value>,
+}
+host_fn!(ma_schedule_at_fn(user_data: Vec<ScheduleRequest>; input: Vec<u8>) -> Vec<u8> {
+    let req: AtScheduleInput = from_cbor_bytes(&input)?;
+    let content = encode_cbor_call_cbor(&req.verb, &req.args);
+    user_data.get()?.lock().unwrap().push(ScheduleRequest::At {
+        timestamp_ms: req.timestamp_ms,
+        content,
+    });
+    Ok(Vec::new())
+});
+
+// `ma_schedule_random` host function: plugin queues a self-rescheduling random job.
+// Input is CBOR-encoded `{ "max_secs": N, "verb": "…", "args": […] }`.
+#[derive(serde::Deserialize)]
+struct RandomScheduleInput {
+    max_secs: u64,
+    verb: String,
+    #[serde(default)]
+    args: Vec<ciborium::Value>,
+}
+host_fn!(ma_schedule_random_fn(user_data: Vec<ScheduleRequest>; input: Vec<u8>) -> Vec<u8> {
+    let req: RandomScheduleInput = from_cbor_bytes(&input)?;
+    let content = encode_cbor_call_cbor(&req.verb, &req.args);
+    user_data.get()?.lock().unwrap().push(ScheduleRequest::Random {
+        max_secs: req.max_secs,
+        content,
+    });
+    Ok(Vec::new())
+});
+
+// `ma_schedule_interval` host function: plugin queues a fixed-interval recurring job.
+// Input is CBOR-encoded `{ "interval": "1h", "verb": "…", "args": […] }`.
+// Duration string supports `s`, `m`, `h`, `d` units, combinable: `"1h30m"`.
+#[derive(serde::Deserialize)]
+struct IntervalScheduleInput {
+    interval: String,
+    verb: String,
+    #[serde(default)]
+    args: Vec<ciborium::Value>,
+}
+host_fn!(ma_schedule_interval_fn(user_data: Vec<ScheduleRequest>; input: Vec<u8>) -> Vec<u8> {
+    let req: IntervalScheduleInput = from_cbor_bytes(&input)?;
+    let secs = parse_duration(&req.interval)
+        .map_err(|e| extism::Error::msg(format!("ma_schedule_interval: {e}")))?
+        .as_secs();
+    let content = encode_cbor_call_cbor(&req.verb, &req.args);
+    user_data.get()?.lock().unwrap().push(ScheduleRequest::Interval { secs, content });
+    Ok(Vec::new())
+});
+
 // `ma_set_state` host function: plugin calls this to queue a new state.
 // Sets `dirty` **only** when the bytes actually differ from the last
 // persisted snapshot — no-op saves do not pollute the dirty flag.
@@ -90,6 +168,8 @@ pub struct DispatchResult {
     /// State bytes queued by the plugin via `ma_set_state` host function.
     /// `None` if the plugin did not call `ma_set_state` during this invocation.
     pub pending_state: Option<Vec<u8>>,
+    /// Schedule requests enqueued via `ma_schedule_*` host functions.
+    pub schedule_requests: Vec<ScheduleRequest>,
 }
 
 // ── Registry type alias ───────────────────────────────────────────────────────
@@ -112,9 +192,14 @@ pub struct EntityPlugin {
     /// ACL name string — resolved via `acls.<acl>` in the root manifest.
     /// Empty string means deny-all (fail-closed).
     pub acl: String,
+    /// Static schedules declared in the entity definition.
+    /// Stored here so bootstrap can register them without re-fetching IPFS data.
+    pub schedules: HashMap<String, crate::schedule::StaticSchedule>,
     plugin: Mutex<Plugin>,
     /// Queue populated by the `ma_send` host function during a plugin call.
     send_queue: UserData<Vec<SendEnvelope>>,
+    /// Queue populated by `ma_schedule_*` host functions during a plugin call.
+    schedule_queue: UserData<Vec<ScheduleRequest>>,
     /// Shared state context: pending bytes, last-persisted snapshot, dirty flag.
     state: UserData<StateCtx>,
 }
@@ -157,13 +242,49 @@ impl EntityPlugin {
         };
 
         // 3. Build extism manifest; register host functions.
-        //    All plugins get ma_send and ma_reply (outbound messaging).
-        //    Stateful plugins additionally get ma_set_state (persistence).
+        //    All plugins get ma_send, ma_reply, and ma_schedule_* (outbound messaging
+        //    and scheduling).  Stateful plugins additionally get ma_set_state.
         let send_queue: UserData<Vec<SendEnvelope>> = UserData::new(Vec::new());
+        let schedule_queue: UserData<Vec<ScheduleRequest>> = UserData::new(Vec::new());
         let state: UserData<StateCtx> = UserData::new(StateCtx::new(init_state.clone()));
         let ma_send = Function::new("ma_send", [PTR], [PTR], send_queue.clone(), ma_send_fn);
         let ma_reply = Function::new("ma_reply", [PTR], [PTR], send_queue.clone(), ma_reply_fn);
-        let mut host_fns = vec![ma_send, ma_reply];
+        let ma_sched_cron = Function::new(
+            "ma_schedule_cron",
+            [PTR],
+            [PTR],
+            schedule_queue.clone(),
+            ma_schedule_cron_fn,
+        );
+        let ma_sched_at = Function::new(
+            "ma_schedule_at",
+            [PTR],
+            [PTR],
+            schedule_queue.clone(),
+            ma_schedule_at_fn,
+        );
+        let ma_sched_random = Function::new(
+            "ma_schedule_random",
+            [PTR],
+            [PTR],
+            schedule_queue.clone(),
+            ma_schedule_random_fn,
+        );
+        let ma_sched_interval = Function::new(
+            "ma_schedule_interval",
+            [PTR],
+            [PTR],
+            schedule_queue.clone(),
+            ma_schedule_interval_fn,
+        );
+        let mut host_fns = vec![
+            ma_send,
+            ma_reply,
+            ma_sched_cron,
+            ma_sched_at,
+            ma_sched_random,
+            ma_sched_interval,
+        ];
         if kind == PluginKind::Stateful {
             host_fns.push(Function::new(
                 "ma_set_state",
@@ -191,8 +312,10 @@ impl EntityPlugin {
             fragment,
             kind,
             acl: node.acl.clone(),
+            schedules: node.schedules.clone(),
             plugin: Mutex::new(plugin),
             send_queue,
+            schedule_queue,
             state,
         })
     }
@@ -236,6 +359,15 @@ impl EntityPlugin {
             .drain(..)
             .collect();
 
+        let schedule_requests = self
+            .schedule_queue
+            .get()
+            .map_err(|e| anyhow!("schedule_queue error: {e}"))?
+            .lock()
+            .map_err(|e| anyhow!("schedule_queue poisoned: {e}"))?
+            .drain(..)
+            .collect();
+
         let pending_state = self
             .state
             .get()
@@ -248,6 +380,7 @@ impl EntityPlugin {
         Ok(DispatchResult {
             envelopes,
             pending_state,
+            schedule_requests,
         })
     }
 

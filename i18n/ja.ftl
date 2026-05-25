@@ -87,3 +87,5 @@ config-key-protected = configキー '%key%' は保護されています
 config-key-no-delete = daemonのconfigキー '%key%' は削除できません
 config-key-not-manifest = configキー '%key%' は既知のmanifest configキーではありません
 wrong-crud-protocol = 不正なCRUDプロトコル: %type%
+entity-name-invalid = entity名は印刷可能なUTF-8でなければなりません
+reserved-entity-name = entity名 '%name%' は予約済みです

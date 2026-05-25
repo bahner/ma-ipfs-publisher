@@ -87,3 +87,5 @@ config-key-protected = funguo ya config '%key%' inalindwa
 config-key-no-delete = funguo ya config ya daemon '%key%' haiwezi kufutwa
 config-key-not-manifest = funguo ya config '%key%' si funguo inayojulikana ya manifest config
 wrong-crud-protocol = itifaki mbaya ya CRUD: %type%
+entity-name-invalid = jina la entity lazima liwe UTF-8 linaloweza kuchapishwa
+reserved-entity-name = jina la entity '%name%' limehifadhiwa

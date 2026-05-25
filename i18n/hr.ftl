@@ -87,3 +87,5 @@ config-key-protected = config ključ '%key%' je zaštićen
 config-key-no-delete = daemon config ključ '%key%' ne može se brisati
 config-key-not-manifest = config ključ '%key%' nije poznati manifest config ključ
 wrong-crud-protocol = pogrešan CRUD protokol: %type%
+entity-name-invalid = naziv entity mora biti ispisivi UTF-8
+reserved-entity-name = naziv entity '%name%' je rezerviran

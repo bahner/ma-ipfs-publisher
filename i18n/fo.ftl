@@ -87,3 +87,5 @@ config-key-protected = config-lykillinn '%key%' er verndaður
 config-key-no-delete = daemon-config-lykillinn '%key%' kann ikki slettast
 config-key-not-manifest = config-lykillinn '%key%' er ikki ein kendur manifest-config-lykill
 wrong-crud-protocol = rang CRUD-protokoll: %type%
+entity-name-invalid = entity-navnið skal vera prentbært UTF-8
+reserved-entity-name = entity-navnið '%name%' er fyrirvara

@@ -93,6 +93,9 @@ pub enum BootstrapEntity {
         /// IPLD link to persisted initial state (stateful entities only).
         #[serde(default)]
         state: Option<IpldLink>,
+        /// Static schedule entries for this entity.  Keys are schedule IDs.
+        #[serde(default)]
+        schedules: HashMap<String, crate::schedule::StaticSchedule>,
     },
 }
 
@@ -166,12 +169,14 @@ pub async fn build_manifest(
                 behavior,
                 acl,
                 state,
+                schedules,
             } => {
                 let node = EntityNode {
                     kind: kind.clone(),
                     behavior: behavior.clone(),
                     acl: acl.clone(),
                     state: state.clone(),
+                    schedules: schedules.clone(),
                 };
                 let cid = kubo::dag_put(kubo_url, &node)
                     .await
@@ -284,6 +289,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
                 behavior: node.behavior,
                 acl: node.acl,
                 state: node.state,
+                schedules: node.schedules,
             },
         );
     }

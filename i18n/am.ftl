@@ -91,3 +91,5 @@ config-key-protected = የ config ቁልፍ '%key%' ጥበቃ ስር ነው
 config-key-no-delete = የ daemon config ቁልፍ '%key%' ሊሰረዝ አይችልም
 config-key-not-manifest = የ config ቁልፍ '%key%' የሚታወቅ manifest config ቁልፍ አይደለም
 wrong-crud-protocol = ስህተት CRUD ፕሮቶኮል: %type%
+entity-name-invalid = የ entity ስም ሊታተም የሚችል UTF-8 መሆን አለበት
+reserved-entity-name = የ entity ስም '%name%' የተጠበቀ ነው

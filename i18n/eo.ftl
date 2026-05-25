@@ -87,3 +87,5 @@ config-key-protected = la agorda ŝlosilo '%key%' estas protektita
 config-key-no-delete = la daemon-agorda ŝlosilo '%key%' ne povas esti forigita
 config-key-not-manifest = la agorda ŝlosilo '%key%' ne estas konata manifest-agorda ŝlosilo
 wrong-crud-protocol = malĝusta CRUD-protokolo: %type%
+entity-name-invalid = la nomo de entity devas esti presebla UTF-8
+reserved-entity-name = la nomo de entity '%name%' estas rezervita

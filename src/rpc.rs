@@ -13,6 +13,7 @@ use tracing::{debug, info, warn};
 use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
 use crate::entity::{CastInput, LocalMessage, PluginCtx, PluginKind, SendEnvelope};
 use crate::plugin::EntityRegistry;
+use crate::schedule::{register_schedule, SchedulerCtx};
 use crate::status::SharedStats;
 
 pub const RPC_PROTOCOL_ID: &str = "/ma/rpc/0.0.1";
@@ -28,6 +29,7 @@ pub struct RpcHandlerCtx<'a> {
     pub entity_registry: EntityRegistry,
     pub stats: SharedStats,
     pub acl_cache: AclCache,
+    pub scheduler: Arc<tokio_cron_scheduler::JobScheduler>,
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -110,7 +112,11 @@ fn extract_fragment<'a>(to: &'a str, our_did: &str) -> Option<&'a str> {
 
 // ── Wasm entity dispatch ───────────────────────────────────────────────────────
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines
+)]
 async fn handle_entity_plugin_message(
     message: &ma_core::Message,
     term: CborValue,
@@ -202,6 +208,22 @@ async fn handle_entity_plugin_message(
         if let Err(e) = send_envelope(env, ctx, &entity.fragment).await {
             warn!(fragment = %entity.fragment, error = %e, "plugin envelope delivery failed");
         }
+    }
+
+    // Register any schedules the plugin enqueued via `ma_schedule_*`.
+    for req in result.schedule_requests {
+        let sched_ctx = SchedulerCtx {
+            entity_registry: ctx.entity_registry.clone(),
+            kubo_rpc_url: ctx.kubo_rpc_url.to_string(),
+            our_did: ctx.our_did.to_string(),
+        };
+        let sched = Arc::clone(&ctx.scheduler);
+        let frag = entity.fragment.clone();
+        tokio::spawn(async move {
+            if let Err(e) = register_schedule(&sched, sched_ctx, frag.clone(), req).await {
+                warn!(fragment = %frag, error = %e, "failed to register plugin schedule");
+            }
+        });
     }
 
     // If the plugin called `ma_set_state` during this dispatch, persist to IPFS.

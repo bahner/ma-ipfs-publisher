@@ -87,3 +87,5 @@ config-key-protected = xavi di config '%key%' sta protejidu
 config-key-no-delete = ka da eliminá xavi di config '%key%' di daemon
 config-key-not-manifest = xavi di config '%key%' ka é un xavi di manifest config konxidu
 wrong-crud-protocol = protokolu CRUD eradu: %type%
+entity-name-invalid = nomi di entity ten di ser UTF-8 imprimivel
+reserved-entity-name = nomi di entity '%name%' ta rezervadu

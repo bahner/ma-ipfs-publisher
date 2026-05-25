@@ -87,3 +87,5 @@ config-key-protected = konfiguratsioonivõti '%key%' on kaitstud
 config-key-no-delete = deemoni konfiguratsioonivõtit '%key%' ei saa kustutada
 config-key-not-manifest = konfiguratsioonivõti '%key%' ei ole teadaolev manifest config võti
 wrong-crud-protocol = vale CRUD-protokoll: %type%
+entity-name-invalid = entity nimi peab olema prinditav UTF-8
+reserved-entity-name = entity nimi '%name%' on reserveeritud

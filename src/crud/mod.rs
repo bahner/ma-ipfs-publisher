@@ -109,9 +109,7 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_
         "config" => config::handle_config_ns(message, &rest, tail, args, reply_type, ctx).await,
         "create" => create::handle_create_ns(message, tail, args, reply_type, ctx).await,
         "acl" => namespaces::handle_root_acl(message, tail, args, reply_type, ctx).await,
-        "acls" => {
-            namespaces::handle_root_acls(message, &rest, tail, args, reply_type, ctx).await
-        }
+        "acls" => namespaces::handle_root_acls(message, &rest, tail, args, reply_type, ctx).await,
         other => {
             namespaces::handle_namespace_op(message, other, &rest, tail, args, reply_type, ctx)
                 .await

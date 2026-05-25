@@ -89,3 +89,5 @@ config-key-protected = config keyit '%key%' iz setanyeng
 config-key-no-delete = daemon config keyit '%key%' du bik delowda
 config-key-not-manifest = config keyit '%key%' nuk kowl manifest config keyit
 wrong-crud-protocol = wrong CRUD protokowl: %type%
+entity-name-invalid = fo name entity printable UTF-8 tenye
+reserved-entity-name = fo name entity '%name%' reserved da

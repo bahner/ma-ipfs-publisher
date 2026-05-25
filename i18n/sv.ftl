@@ -87,3 +87,5 @@ config-key-protected = config-nyckeln '%key%' är skyddad
 config-key-no-delete = daemon-config-nyckeln '%key%' kan inte tas bort
 config-key-not-manifest = config-nyckeln '%key%' är inte en känd manifest config-nyckel
 wrong-crud-protocol = fel CRUD-protokoll: %type%
+entity-name-invalid = entity-namn måste vara utskrivbart UTF-8
+reserved-entity-name = entity-namn '%name%' är reserverat

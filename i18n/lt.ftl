@@ -87,3 +87,5 @@ config-key-protected = konfigūracijos raktas '%key%' yra apsaugotas
 config-key-no-delete = daemon konfigūracijos rakto '%key%' negalima ištrinti
 config-key-not-manifest = konfigūracijos raktas '%key%' nėra žinomas manifest config raktas
 wrong-crud-protocol = neteisingas CRUD protokolas: %type%
+entity-name-invalid = entity pavadinimas turi būti spausdinamas UTF-8
+reserved-entity-name = entity pavadinimas '%name%' yra rezervuotas

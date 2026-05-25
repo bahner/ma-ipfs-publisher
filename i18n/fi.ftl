@@ -87,3 +87,5 @@ config-key-protected = config-avain '%key%' on suojattu
 config-key-no-delete = daemon-config-avainta '%key%' ei voi poistaa
 config-key-not-manifest = config-avain '%key%' ei ole tunnettu manifest config -avain
 wrong-crud-protocol = väärä CRUD-protokolla: %type%
+entity-name-invalid = entity-nimen täytyy olla tulostettavaa UTF-8
+reserved-entity-name = entity-nimi '%name%' on varattu

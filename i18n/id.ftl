@@ -87,3 +87,5 @@ config-key-protected = kunci config '%key%' dilindungi
 config-key-no-delete = kunci config daemon '%key%' tidak dapat dihapus
 config-key-not-manifest = kunci config '%key%' bukan kunci manifest config yang dikenal
 wrong-crud-protocol = protokol CRUD salah: %type%
+entity-name-invalid = nama entity harus berupa UTF-8 yang dapat dicetak
+reserved-entity-name = nama entity '%name%' sudah dicadangkan

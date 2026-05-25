@@ -87,3 +87,5 @@ config-key-protected = konfiguracijski ključ '%key%' je zaščiten
 config-key-no-delete = konfiguracijski ključ '%key%' demona ni mogoče izbrisati
 config-key-not-manifest = konfiguracijski ključ '%key%' ni znan ključ manifest config
 wrong-crud-protocol = napačen protokol CRUD: %type%
+entity-name-invalid = ime entity mora biti tiskljivi UTF-8
+reserved-entity-name = ime entity '%name%' je rezervirano

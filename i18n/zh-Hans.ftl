@@ -87,3 +87,5 @@ config-key-protected = config 键 '%key%' 受保护
 config-key-no-delete = 无法删除 daemon config 键 '%key%'
 config-key-not-manifest = config 键 '%key%' 不是已知的 manifest config 键
 wrong-crud-protocol = 错误的 CRUD 协议：%type%
+entity-name-invalid = entity 名称必须是可打印的 UTF-8
+reserved-entity-name = entity 名称 '%name%' 已被保留

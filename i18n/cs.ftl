@@ -87,3 +87,5 @@ config-key-protected = konfigurační klíč '%key%' je chráněný
 config-key-no-delete = konfigurační klíč '%key%' démona nelze smazat
 config-key-not-manifest = konfigurační klíč '%key%' není známým klíčem manifest config
 wrong-crud-protocol = nesprávný protokol CRUD: %type%
+entity-name-invalid = název entity musí být tisknutelné UTF-8
+reserved-entity-name = název entity '%name%' je vyhrazený

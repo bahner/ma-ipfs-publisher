@@ -87,3 +87,5 @@ config-key-protected = config کی چابی '%key%' محفوظ ہے
 config-key-no-delete = daemon config کی چابی '%key%' کو حذف نہیں کیا جا سکتا
 config-key-not-manifest = config کی چابی '%key%' ایک معروف manifest config چابی نہیں ہے
 wrong-crud-protocol = غلط CRUD پروٹوکول: %type%
+entity-name-invalid = entity کا نام قابلِ پرنٹ UTF-8 ہونا چاہیے
+reserved-entity-name = entity کا نام '%name%' محفوظ ہے

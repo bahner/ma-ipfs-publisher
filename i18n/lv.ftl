@@ -87,3 +87,5 @@ config-key-protected = konfigurācijas atslēga '%key%' ir aizsargāta
 config-key-no-delete = daemon konfigurācijas atslēgu '%key%' nevar dzēst
 config-key-not-manifest = konfigurācijas atslēga '%key%' nav zināma manifest config atslēga
 wrong-crud-protocol = nepareizs CRUD protokols: %type%
+entity-name-invalid = entity nosaukumam jābūt drukājamam UTF-8
+reserved-entity-name = entity nosaukums '%name%' ir rezervēts

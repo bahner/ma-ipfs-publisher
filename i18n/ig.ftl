@@ -87,3 +87,5 @@ config-key-protected = igodo config '%key%' na-echekwa
 config-key-no-delete = igodo config daemon '%key%' enweghị ike ihichapụ ya
 config-key-not-manifest = igodo config '%key%' abụghị igodo manifest config ama ama
 wrong-crud-protocol = protocol CRUD dị njọ: %type%
+entity-name-invalid = aha entity ga abụ UTF-8 enwere ike ị depụta
+reserved-entity-name = aha entity '%name%' edobere

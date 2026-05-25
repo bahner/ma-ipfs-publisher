@@ -6,8 +6,8 @@ use crate::acl::check_full;
 use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
-    load_manifest, register_entity_plugin, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid,
-    send_crud_reply, send_crud_reply_cbor, with_manifest_crud,
+    load_manifest, register_entity_plugin, send_crud_i18n_error, send_crud_i18n_errorf,
+    send_crud_ok, send_crud_ok_cid, send_crud_reply, send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -97,6 +97,19 @@ async fn handle_single_entity(
             // Upsert entity — requires `create` + `entities` in root ACL.
             check_entity_management_cap(message, ctx, &["create", "entities"]).await?;
             let name = name.as_str();
+            if name.chars().any(char::is_control) {
+                return send_crud_i18n_error(message, reply_type, ctx, "entity-name-invalid").await;
+            }
+            if crate::entity::RESERVED_ENTITY_NAMES.contains(&name) {
+                return send_crud_i18n_errorf(
+                    message,
+                    reply_type,
+                    ctx,
+                    "reserved-entity-name",
+                    &[("name", name)],
+                )
+                .await;
+            }
             let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
                 .await
                 .with_context(|| format!("resolving path {path}"))?;
@@ -221,9 +234,7 @@ async fn handle_entity_acl_field(
             if !manifest.acls.contains_key(acl_name) {
                 let available: Vec<&String> = manifest.acls.keys().collect();
                 return Err(anyhow!(
-                    "ACL name '{}' not found in manifest; available: {:?}",
-                    acl_name,
-                    available
+                    "ACL name '{acl_name}' not found in manifest; available: {available:?}"
                 ));
             }
             let mut entity = fetch_entity_node(ctx, name).await?;

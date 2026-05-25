@@ -87,3 +87,5 @@ config-key-protected = bọtini config '%key%' ni aabo
 config-key-no-delete = bọtini config '%key%' ti daemon ko le parẹ
 config-key-not-manifest = bọtini config '%key%' kii ṣe bọtini manifest config ti a mọ
 wrong-crud-protocol = ilana CRUD ti ko tọ: %type%
+entity-name-invalid = orúkọ entity gbọdọ jẹ UTF-8 tí a lè tẹ
+reserved-entity-name = orúkọ entity '%name%' jẹ ìpamọ́

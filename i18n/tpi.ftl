@@ -87,3 +87,5 @@ config-key-protected = config ki '%key%' i gat banis
 config-key-no-delete = i no inap rausim daemon config ki '%key%'
 config-key-not-manifest = config ki '%key%' i no wan manifest config ki we ol save
 wrong-crud-protocol = CRUD protokol i rong: %type%
+entity-name-invalid = nem bilong entity i mas stap printable UTF-8
+reserved-entity-name = nem bilong entity '%name%' i reserved

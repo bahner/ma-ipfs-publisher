@@ -87,3 +87,5 @@ config-key-protected = maɓallin config '%key%' yana ƙarƙashin kariya
 config-key-no-delete = ba za a iya share maɓallin config '%key%' na daemon ba
 config-key-not-manifest = maɓallin config '%key%' ba shi ne maɓallin manifest config da aka sani ba
 wrong-crud-protocol = kuskuren CRUD protocol: %type%
+entity-name-invalid = sunan entity dole ne ya kasance UTF-8 da za a buga
+reserved-entity-name = sunan entity '%name%' ya keɓe

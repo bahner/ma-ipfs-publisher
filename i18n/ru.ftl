@@ -87,3 +87,5 @@ config-key-protected = ключ config '%key%' защищён
 config-key-no-delete = ключ config '%key%' демона не может быть удалён
 config-key-not-manifest = ключ config '%key%' не является известным ключом manifest config
 wrong-crud-protocol = неверный протокол CRUD: %type%
+entity-name-invalid = имя entity должно быть печатным UTF-8
+reserved-entity-name = имя entity '%name%' зарезервировано

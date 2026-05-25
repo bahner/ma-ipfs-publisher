@@ -75,4 +75,30 @@ runtime:
         /: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
       acl: open
 
+    # Recurring schedule example: fire `:chime` every hour on the hour.
+    # 6-field cron: "sec min hour day month weekday"
+    clock:
+      kind: /ma/stateless/python/0.0.1
+      behavior:
+        /: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+      acl: open
+      schedules:
+        chime_hourly:
+          cron: "0 0 * * * *"
+          verb: ":chime"
+        tick_every_minute:
+          interval: 1m
+          verb: ":tick"
+
+    # Random re-scheduling example: fire `:scratch` after 1–300 seconds,
+    # then re-schedule with another random delay in the same range.
+    dog:
+      kind: /ma/stateless/python/0.0.1
+      behavior:
+        /: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+      acl: open
+      schedules:
+        scratch:
+          random_max_secs: 300
+          verb: ":scratch"
 

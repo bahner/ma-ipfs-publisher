@@ -7,6 +7,7 @@ mod ipfs;
 mod kubo;
 mod plugin;
 mod rpc;
+mod schedule;
 mod status;
 
 use anyhow::{anyhow, Context, Result};
@@ -15,6 +16,7 @@ use clap::Parser;
 use ma_core::config::{Config, MaArgs, SecretBundle};
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::{ipns_from_secret, Ipld, ReplayGuard, IPFS_PROTOCOL_ID};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -323,6 +325,45 @@ async fn main() -> Result<()> {
         info!(count = %count, "Entity plugins loaded");
     }
 
+    // ── Scheduler: register static schedules from entity definitions ──────────
+    let sched = Arc::new(
+        tokio_cron_scheduler::JobScheduler::new()
+            .await
+            .context("creating job scheduler")?,
+    );
+    sched.start().await.context("starting job scheduler")?;
+    {
+        // Snapshot entity schedules to avoid holding the registry lock across awaits.
+        let static_schedules: Vec<(String, HashMap<String, schedule::StaticSchedule>)> =
+            entity_registry
+                .read()
+                .await
+                .iter()
+                .map(|(k, v)| (k.clone(), v.schedules.clone()))
+                .collect();
+        for (fragment, schedules) in static_schedules {
+            for (id, static_sched) in &schedules {
+                let req = match schedule::ScheduleRequest::from_static(static_sched) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(fragment = %fragment, id = %id, error = %e, "invalid static schedule; skipping");
+                        continue;
+                    }
+                };
+                let sched_ctx = schedule::SchedulerCtx {
+                    entity_registry: entity_registry.clone(),
+                    kubo_rpc_url: config.kubo_rpc_url.clone(),
+                    our_did: our_did.clone(),
+                };
+                if let Err(e) =
+                    schedule::register_schedule(&sched, sched_ctx, fragment.clone(), req).await
+                {
+                    warn!(fragment = %fragment, id = %id, error = %e, "failed to register static schedule");
+                }
+            }
+        }
+    }
+
     // ── Load named ACLs into cache ─────────────────────────────────────────────
     let acl_cache = acl::new_acl_cache();
     if let Some(ref rc) = root_cid {
@@ -614,6 +655,7 @@ async fn main() -> Result<()> {
                             entity_registry: entity_registry.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
+                            scheduler: Arc::clone(&sched),
                         },
                     )
                     .await

@@ -87,3 +87,5 @@ config-key-protected = config की '%key%' संरक्षित आहे
 config-key-no-delete = daemon config की '%key%' हटविता येत नाही
 config-key-not-manifest = config की '%key%' हे ज्ञात manifest config की नाही
 wrong-crud-protocol = चुकीचा CRUD प्रोटोकॉल: %type%
+entity-name-invalid = entity चे नाव मुद्रण करण्यायोग्य UTF-8 असणे आवश्यक आहे
+reserved-entity-name = entity चे नाव '%name%' राखीव आहे

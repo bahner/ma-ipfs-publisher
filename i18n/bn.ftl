@@ -87,3 +87,5 @@ config-key-protected = config কী '%key%' সুরক্ষিত
 config-key-no-delete = daemon config কী '%key%' মুছে ফেলা যাবে না
 config-key-not-manifest = config কী '%key%' একটি পরিচিত manifest config কী নয়
 wrong-crud-protocol = ভুল CRUD প্রোটোকল: %type%
+entity-name-invalid = entity নামটি অবশ্যই মুদ্রণযোগ্য UTF-8 হতে হবে
+reserved-entity-name = entity নাম '%name%' সংরক্ষিত

@@ -87,3 +87,5 @@ config-key-protected = a '%key%' config kulcs védett
 config-key-no-delete = a '%key%' daemon config kulcs nem törölhető
 config-key-not-manifest = a '%key%' config kulcs nem ismert manifest config kulcs
 wrong-crud-protocol = helytelen CRUD protokoll: %type%
+entity-name-invalid = az entity neve nyomtatható UTF-8 legyen
+reserved-entity-name = az entity neve '%name%' foglalt

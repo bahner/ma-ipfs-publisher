@@ -87,3 +87,5 @@ config-key-protected = Konfigurationsschlüssel '%key%' ist geschützt
 config-key-no-delete = Daemon-Konfigurationsschlüssel '%key%' kann nicht gelöscht werden
 config-key-not-manifest = Konfigurationsschlüssel '%key%' ist kein bekannter manifest-config-Schlüssel
 wrong-crud-protocol = falsches CRUD-Protokoll: %type%
+entity-name-invalid = Entity-Name muss druckbares UTF-8 sein
+reserved-entity-name = Entity-Name '%name%' ist reserviert

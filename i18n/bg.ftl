@@ -87,3 +87,5 @@ config-key-protected = конфигурационният ключ '%key%' е з
 config-key-no-delete = конфигурационният ключ '%key%' на демона не може да бъде изтрит
 config-key-not-manifest = конфигурационният ключ '%key%' не е познат ключ на manifest config
 wrong-crud-protocol = грешен CRUD протокол: %type%
+entity-name-invalid = Името на entity трябва да бъде отпечатваем UTF-8
+reserved-entity-name = Името на entity '%name%' е запазено

@@ -87,3 +87,5 @@ config-key-protected = kle config '%key%' la pwoteje
 config-key-no-delete = yo pa ka efase kle config '%key%' daemon an
 config-key-not-manifest = kle config '%key%' la pa yon kle manifest config ki konnen
 wrong-crud-protocol = move protokòl CRUD: %type%
+entity-name-invalid = non entity a dwe UTF-8 ki ka enprime
+reserved-entity-name = non entity '%name%' rezerve

@@ -87,3 +87,5 @@ config-key-protected = la clé de config '%key%' est protégée
 config-key-no-delete = la clé de config '%key%' du démon ne peut pas être supprimée
 config-key-not-manifest = la clé de config '%key%' n'est pas une clé de manifest config connue
 wrong-crud-protocol = mauvais protocole CRUD : %type%
+entity-name-invalid = le nom d'entity doit être en UTF-8 imprimable
+reserved-entity-name = le nom d'entity '%name%' est réservé

@@ -87,3 +87,5 @@ config-key-protected = config anahtarı '%key%' korunmaktadır
 config-key-no-delete = daemon config anahtarı '%key%' silinemez
 config-key-not-manifest = config anahtarı '%key%' bilinen bir manifest config anahtarı değil
 wrong-crud-protocol = yanlış CRUD protokolü: %type%
+entity-name-invalid = entity adı yazdırılabilir UTF-8 olmalıdır
+reserved-entity-name = entity adı '%name%' ayrılmıştır

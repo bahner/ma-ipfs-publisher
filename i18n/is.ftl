@@ -87,3 +87,5 @@ config-key-protected = stillingarlykillinn '%key%' er varinn
 config-key-no-delete = ekki er hægt að eyða stillingarlykli '%key%' þjónustunnar
 config-key-not-manifest = stillingarlykillinn '%key%' er ekki þekktur manifest-stillingarlykill
 wrong-crud-protocol = rangur CRUD-samskiptaregla: %type%
+entity-name-invalid = entity-nafnið verður að vera prentanlegt UTF-8
+reserved-entity-name = entity-nafnið '%name%' er frátekið

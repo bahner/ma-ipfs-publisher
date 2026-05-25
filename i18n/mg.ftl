@@ -87,3 +87,5 @@ config-key-protected = ny fanalahidin'ny config '%key%' dia voaro
 config-key-no-delete = ny fanalahidin'ny daemon config '%key%' dia tsy azo esorina
 config-key-not-manifest = ny fanalahidin'ny config '%key%' dia tsy fanalahidy manifest config fantatra
 wrong-crud-protocol = diso ny CRUD protocol: %type%
+entity-name-invalid = ny anaran'ny entity dia tsy maintsy UTF-8 azo atonta
+reserved-entity-name = ny anaran'ny entity '%name%' dia voatokana

@@ -87,3 +87,5 @@ config-key-protected = e yabi di config '%key%' ta protehá
 config-key-no-delete = e yabi di config '%key%' di daemon no por wòrdu borá
 config-key-not-manifest = e yabi di config '%key%' no ta un yabi di manifest config konosí
 wrong-crud-protocol = protokòl CRUD rong: %type%
+entity-name-invalid = number di entity mester ta UTF-8 printabel
+reserved-entity-name = number di entity '%name%' ta reserva

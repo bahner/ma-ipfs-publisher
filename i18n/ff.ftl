@@ -87,3 +87,5 @@ config-key-protected = sorol config '%key%' nder keerol
 config-key-no-delete = sorol config daemon '%key%' waawaa wanaa
 config-key-not-manifest = sorol config '%key%' alaa e sorol manifest config gannduɗi
 wrong-crud-protocol = protokol CRUD moƴƴi alaa: %type%
+entity-name-invalid = innde entity ngoodha UTF-8 e bindateji
+reserved-entity-name = innde entity '%name%' ndi dokkaa

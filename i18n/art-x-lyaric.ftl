@@ -89,3 +89,5 @@ config-key-protected = config key '%key%' is inna protection
 config-key-no-delete = daemon config key '%key%' cyan delete
 config-key-not-manifest = config key '%key%' nah known manifest config key
 wrong-crud-protocol = wrong CRUD protocol: %type%
+entity-name-invalid = di entity name must be clean printable UTF-8
+reserved-entity-name = di entity name '%name%' ital, it reserved

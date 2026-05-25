@@ -87,3 +87,5 @@ config-key-protected = config key '%key%' protect
 config-key-no-delete = daemon config key '%key%' cyaan delete
 config-key-not-manifest = config key '%key%' nuh known manifest config key
 wrong-crud-protocol = wrong CRUD protocol: %type%
+entity-name-invalid = di entity name haffi be printable UTF-8
+reserved-entity-name = di entity name '%name%' reserved

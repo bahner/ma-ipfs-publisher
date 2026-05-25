@@ -87,3 +87,5 @@ config-key-protected = furaha config '%key%' waa la ilaaliyo
 config-key-no-delete = furaha config '%key%' ee daemon lama tirtiri karo
 config-key-not-manifest = furaha config '%key%' maaha furah manifest config la garanayo
 wrong-crud-protocol = protokoolka CRUD ee khaldan: %type%
+entity-name-invalid = magaca entity waa inuu noqdaa UTF-8 la daabici karo
+reserved-entity-name = magaca entity '%name%' waa la kaydiyay

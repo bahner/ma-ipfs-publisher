@@ -87,3 +87,5 @@ config-key-protected = ukhiye we-config '%key%' ukhuselelwe
 config-key-no-delete = ukhiye we-config we-daemon '%key%' awukwazi ukususwa
 config-key-not-manifest = ukhiye we-config '%key%' akuyona inqolobane ye-manifest config eyaziwa
 wrong-crud-protocol = iphrothokholi ye-CRUD engalungile: %type%
+entity-name-invalid = igama le-entity kufanele libe yi-UTF-8 elingashicilelwa
+reserved-entity-name = igama le-entity '%name%' ligcinelwe

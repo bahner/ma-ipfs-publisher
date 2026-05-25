@@ -87,3 +87,5 @@ config-key-protected = a chave de config '%key%' está protegida
 config-key-no-delete = a chave de config '%key%' do daemon não pode ser eliminada
 config-key-not-manifest = a chave de config '%key%' não é uma chave de manifest config conhecida
 wrong-crud-protocol = protocolo CRUD incorreto: %type%
+entity-name-invalid = o nome da entity deve ser UTF-8 imprimível
+reserved-entity-name = o nome da entity '%name%' está reservado

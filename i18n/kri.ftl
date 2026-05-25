@@ -87,3 +87,5 @@ config-key-protected = config ki '%key%' na pɔtɛkt
 config-key-no-delete = daemon config ki '%key%' kɛn nɔt bi dilit
 config-key-not-manifest = config ki '%key%' na nɔ nɔ manifest config ki
 wrong-crud-protocol = rɔng CRUD protokɔl: %type%
+entity-name-invalid = di entity nem fɔ bi printable UTF-8
+reserved-entity-name = di entity nem '%name%' reserved

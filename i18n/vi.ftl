@@ -87,3 +87,5 @@ config-key-protected = khóa config '%key%' được bảo vệ
 config-key-no-delete = khóa config '%key%' của daemon không thể xóa
 config-key-not-manifest = khóa config '%key%' không phải là khóa manifest config đã biết
 wrong-crud-protocol = giao thức CRUD sai: %type%
+entity-name-invalid = tên entity phải là UTF-8 có thể in được
+reserved-entity-name = tên entity '%name%' đã được đặt trước

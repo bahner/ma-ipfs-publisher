@@ -87,3 +87,5 @@ config-key-protected = isitshixo se-config '%key%' sikhuselelwe
 config-key-no-delete = isitshixo se-config se-daemon '%key%' asinakufinywa
 config-key-not-manifest = isitshixo se-config '%key%' asiyositshixo se-manifest config esaziwa
 wrong-crud-protocol = iphrothokholi ye-CRUD engalunganga: %type%
+entity-name-invalid = igama le-entity kufuneka libe yi-UTF-8 enokuncinwa
+reserved-entity-name = igama le-entity '%name%' ligciniwe

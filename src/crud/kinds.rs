@@ -50,13 +50,8 @@ pub(super) async fn handle_kinds_ns(
             match items.as_slice() {
                 [CborValue::Text(protocol), CborValue::Text(cid_str)] => {
                     if !is_cidv1(cid_str) {
-                        return send_crud_i18n_error(
-                            message,
-                            reply_type,
-                            ctx,
-                            "cidv1-required",
-                        )
-                        .await;
+                        return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required")
+                            .await;
                     }
                     let protocol = protocol.clone();
                     let cid = cid_str.clone();
@@ -86,13 +81,10 @@ pub(super) async fn handle_kinds_ns(
             let manifest = load_manifest(ctx).await?;
             match manifest.kinds.get_protocol(protocol) {
                 Some(link) => {
-                    let kind: KindNode =
-                        crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?;
+                    let kind: KindNode = crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?;
                     send_crud_reply_cbor(message, reply_type, ctx, &kind).await
                 }
-                None => {
-                    send_crud_i18n_error(message, reply_type, ctx, "kind-not-found").await
-                }
+                None => send_crud_i18n_error(message, reply_type, ctx, "kind-not-found").await,
             }
         }
         // DELETE :kinds (root) → refuse

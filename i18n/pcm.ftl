@@ -87,3 +87,5 @@ config-key-protected = config key '%key%' dey protected
 config-key-no-delete = daemon config key '%key%' no fit delete
 config-key-not-manifest = config key '%key%' no be known manifest config key
 wrong-crud-protocol = wrong CRUD protocol: %type%
+entity-name-invalid = entity name suppose be printable UTF-8
+reserved-entity-name = entity name '%name%' don reserve

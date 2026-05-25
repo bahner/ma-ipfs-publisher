@@ -87,3 +87,5 @@ config-key-protected = مفتاح config '%key%' محمي
 config-key-no-delete = لا يمكن حذف مفتاح config '%key%' للخادم
 config-key-not-manifest = مفتاح config '%key%' ليس مفتاح manifest config معروفاً
 wrong-crud-protocol = بروتوكول CRUD خاطئ: %type%
+entity-name-invalid = يجب أن يكون اسم الكيان UTF-8 قابلاً للطباعة
+reserved-entity-name = اسم الكيان '%name%' محجوز

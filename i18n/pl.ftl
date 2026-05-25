@@ -87,3 +87,5 @@ config-key-protected = klucz config '%key%' jest chroniony
 config-key-no-delete = klucza config '%key%' demona nie można usunąć
 config-key-not-manifest = klucz config '%key%' nie jest znany kluczem manifest config
 wrong-crud-protocol = nieprawidłowy protokół CRUD: %type%
+entity-name-invalid = nazwa entity musi być drukowalnym UTF-8
+reserved-entity-name = nazwa entity '%name%' jest zarezerwowana

@@ -87,3 +87,5 @@ config-key-protected = config-sleutel '%key%' is beveiligd
 config-key-no-delete = daemon-config-sleutel '%key%' kan niet worden verwijderd
 config-key-not-manifest = config-sleutel '%key%' is geen bekende manifest config-sleutel
 wrong-crud-protocol = verkeerd CRUD-protocol: %type%
+entity-name-invalid = entity-naam moet afdrukbare UTF-8 zijn
+reserved-entity-name = entity-naam '%name%' is gereserveerd

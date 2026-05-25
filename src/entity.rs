@@ -298,6 +298,10 @@ pub struct NamespaceNode {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
+/// Entity fragment names reserved by the runtime system.
+/// These names cannot be used as entity names.
+pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "runtime"];
+
 /// IPLD node representing a single entity.
 ///
 /// Access is controlled by the entity-level ACL.  WASI support is derived
@@ -317,6 +321,10 @@ pub struct EntityNode {
     /// Omitted when absent, which is the expected shape for stateless entities.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<IpldLink>,
+    /// Static schedules for this entity.  Keys are schedule IDs (e.g.
+    /// `"chime_hourly"`).  Rebuilt from scratch on startup and entity reload.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub schedules: HashMap<String, crate::schedule::StaticSchedule>,
 }
 
 /// Root IPLD node for this runtime.
@@ -376,6 +384,7 @@ pub struct SendEnvelope {
 #[cfg(test)]
 mod tests {
     use super::{EntityNode, IpldLink, KindTree, PluginKind};
+    use std::collections::HashMap;
 
     #[test]
     fn kind_tree_nested_serialization() {
@@ -424,9 +433,12 @@ mod tests {
     fn serializing_entity_without_state_omits_state_field() {
         let node = EntityNode {
             kind: "/ma/stateless/python/0.0.1".to_string(),
-            behavior: "bafybehavior".to_string(),
+            behavior: IpldLink {
+                cid: "bafybehavior".to_string(),
+            },
             acl: String::new(),
             state: None,
+            schedules: HashMap::new(),
         };
 
         let value = serde_json::to_value(&node).expect("serialize entity node");
@@ -440,9 +452,12 @@ mod tests {
     fn serializing_entity_always_includes_acl_field() {
         let node = EntityNode {
             kind: "/ma/stateless/python/0.0.1".to_string(),
-            behavior: "bafybehavior".to_string(),
+            behavior: IpldLink {
+                cid: "bafybehavior".to_string(),
+            },
             acl: String::new(),
             state: None,
+            schedules: HashMap::new(),
         };
         let value = serde_json::to_value(&node).expect("serialize entity node");
         assert!(
