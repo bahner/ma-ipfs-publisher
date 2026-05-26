@@ -40,5 +40,3 @@ lto = true
 codegen-units = 1
 strip = true
 
-[patch.crates-io]
-ma-core = { path = "../rust-ma-core" }

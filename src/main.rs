@@ -368,8 +368,14 @@ async fn main() -> Result<()> {
                     kubo_rpc_url: config.kubo_rpc_url.clone(),
                     our_did: our_did.clone(),
                 };
-                if let Err(e) =
-                    schedule::register_schedule(&sched, sched_ctx, fragment.clone(), req).await
+                if let Err(e) = schedule::register_schedule(
+                    &sched,
+                    sched_ctx,
+                    fragment.clone(),
+                    Some(id.clone()),
+                    req,
+                )
+                .await
                 {
                     warn!(fragment = %fragment, id = %id, error = %e, "failed to register static schedule");
                 }
@@ -751,6 +757,7 @@ async fn main() -> Result<()> {
                                 acl_cache: acl_cache.clone(),
                                 root_acl: acl.clone(),
                                 envelope_tx: envelope_tx.clone(),
+                                scheduler: Arc::clone(&sched),
                             },
                         )
                         .await

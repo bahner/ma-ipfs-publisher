@@ -214,7 +214,7 @@ async fn handle_entity_plugin_message(
         let sched = Arc::clone(&ctx.scheduler);
         let frag = entity.fragment.clone();
         tokio::spawn(async move {
-            if let Err(e) = register_schedule(&sched, sched_ctx, frag.clone(), req).await {
+            if let Err(e) = register_schedule(&sched, sched_ctx, frag.clone(), None, req).await {
                 warn!(fragment = %frag, error = %e, "failed to register plugin schedule");
             }
         });

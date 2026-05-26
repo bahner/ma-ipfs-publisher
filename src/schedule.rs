@@ -119,11 +119,18 @@ pub struct SchedulerCtx {
 
 /// Register a [`ScheduleRequest`] on the scheduler for the named entity.
 ///
+/// `schedule_id`: the key from [`EntityNode::schedules`] that this job
+/// corresponds to, or `None` for dynamically-created schedules.  When
+/// `Some(id)` is supplied the job closure checks at fire time whether the
+/// id still exists in the entity's schedule map; if it was removed the
+/// dispatch is a no-op.  `None` always dispatches.
+///
 /// Returns the scheduler-assigned [`uuid::Uuid`] for the created job.
 pub async fn register_schedule(
     sched: &JobScheduler,
     ctx: SchedulerCtx,
     fragment: String,
+    schedule_id: Option<String>,
     req: ScheduleRequest,
 ) -> Result<uuid::Uuid> {
     let id = match req {
@@ -131,12 +138,14 @@ pub async fn register_schedule(
             let job = Job::new_async(spec.as_str(), {
                 let ctx = ctx.clone();
                 let fragment = fragment.clone();
+                let schedule_id = schedule_id.clone();
                 move |_, _| {
                     let ctx = ctx.clone();
                     let fragment = fragment.clone();
                     let content = content.clone();
+                    let schedule_id = schedule_id.clone();
                     Box::pin(async move {
-                        dispatch_scheduled(&ctx, &fragment, &content).await;
+                        dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
                     })
                 }
             })?;
@@ -147,12 +156,14 @@ pub async fn register_schedule(
             let job = Job::new_repeated_async(Duration::from_secs(secs), {
                 let ctx = ctx.clone();
                 let fragment = fragment.clone();
+                let schedule_id = schedule_id.clone();
                 move |_, _| {
                     let ctx = ctx.clone();
                     let fragment = fragment.clone();
                     let content = content.clone();
+                    let schedule_id = schedule_id.clone();
                     Box::pin(async move {
-                        dispatch_scheduled(&ctx, &fragment, &content).await;
+                        dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
                     })
                 }
             })?;
@@ -174,12 +185,14 @@ pub async fn register_schedule(
             let job = Job::new_one_shot_async(Duration::from_millis(delay_ms), {
                 let ctx = ctx.clone();
                 let fragment = fragment.clone();
+                let schedule_id = schedule_id.clone();
                 move |_, _| {
                     let ctx = ctx.clone();
                     let fragment = fragment.clone();
                     let content = content.clone();
+                    let schedule_id = schedule_id.clone();
                     Box::pin(async move {
-                        dispatch_scheduled(&ctx, &fragment, &content).await;
+                        dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
                     })
                 }
             })?;
@@ -187,7 +200,8 @@ pub async fn register_schedule(
         }
 
         ScheduleRequest::Random { max_secs, content } => {
-            let job = make_random_job(sched.clone(), ctx, fragment, content, max_secs)?;
+            let job =
+                make_random_job(sched.clone(), ctx, fragment, schedule_id, content, max_secs)?;
             sched.add(job).await?
         }
     };
@@ -196,14 +210,13 @@ pub async fn register_schedule(
 
 /// Create a self-rescheduling one-shot random job.
 ///
-/// After firing, it adds a new random job to the same scheduler so the
-/// entity is called again after another random delay.  This is a named
-/// function (not a closure) so the recursive call compiles without infinite
-/// type regress.
+/// After firing, it checks whether the schedule still exists in the entity's
+/// schedule map before re-adding, so removed schedules terminate naturally.
 pub fn make_random_job(
     sched: JobScheduler,
     ctx: SchedulerCtx,
     fragment: String,
+    schedule_id: Option<String>,
     content: Vec<u8>,
     max_secs: u64,
 ) -> Result<Job> {
@@ -212,18 +225,37 @@ pub fn make_random_job(
         let sched = sched.clone();
         let ctx = ctx.clone();
         let fragment = fragment.clone();
+        let schedule_id = schedule_id.clone();
         let content = content.clone();
         Box::pin(async move {
-            dispatch_scheduled(&ctx, &fragment, &content).await;
-            // Re-schedule with a new independent random delay.
-            match make_random_job(sched.clone(), ctx, fragment.clone(), content, max_secs) {
-                Ok(next) => {
-                    if let Err(e) = sched.add(next).await {
-                        warn!(fragment = %fragment, error = %e, "failed to reschedule random job");
+            dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
+            // Re-schedule only if this schedule still exists in the entity definition.
+            let still_active = match schedule_id.as_deref() {
+                Some(id) => ctx
+                    .entity_registry
+                    .read()
+                    .await
+                    .get(&fragment)
+                    .map_or(false, |p| p.schedules.contains_key(id)),
+                None => true,
+            };
+            if still_active {
+                match make_random_job(
+                    sched.clone(),
+                    ctx,
+                    fragment.clone(),
+                    schedule_id,
+                    content,
+                    max_secs,
+                ) {
+                    Ok(next) => {
+                        if let Err(e) = sched.add(next).await {
+                            warn!(fragment = %fragment, error = %e, "failed to reschedule random job");
+                        }
                     }
-                }
-                Err(e) => {
-                    warn!(fragment = %fragment, error = %e, "failed to create next random job");
+                    Err(e) => {
+                        warn!(fragment = %fragment, error = %e, "failed to create next random job");
+                    }
                 }
             }
         })
@@ -276,12 +308,25 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
 ///
 /// - Outbound envelopes from the call are silently dropped.
 /// - State changes via `ma_set_state` are persisted to IPFS.
-pub async fn dispatch_scheduled(ctx: &SchedulerCtx, fragment: &str, content: &[u8]) {
+pub async fn dispatch_scheduled(
+    ctx: &SchedulerCtx,
+    fragment: &str,
+    schedule_id: Option<&str>,
+    content: &[u8],
+) {
     let plugin = ctx.entity_registry.read().await.get(fragment).cloned();
     let Some(plugin) = plugin else {
         warn!(fragment = %fragment, "scheduled dispatch: entity not found");
         return;
     };
+
+    // Guard: if this job was registered for a named static schedule that has
+    // since been removed from the entity definition, skip the dispatch.
+    if let Some(id) = schedule_id {
+        if !plugin.schedules.contains_key(id) {
+            return;
+        }
+    }
 
     let now_nanos = u64::try_from(
         SystemTime::now()

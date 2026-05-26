@@ -48,6 +48,8 @@ pub struct CrudHandlerCtx<'a> {
     pub root_acl: SharedAcl,
     /// Forwarding channel for envelopes produced by entity plugins via `ma_send`.
     pub envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, SendEnvelope)>,
+    /// Scheduler — used to register new jobs when an entity is updated.
+    pub scheduler: Arc<tokio_cron_scheduler::JobScheduler>,
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
