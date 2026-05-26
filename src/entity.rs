@@ -473,7 +473,7 @@ mod tests {
     fn deserializing_entity_accepts_missing_state_field() {
         let raw = r#"{
             "kind": "/ma/stateless/python/0.0.1",
-            "behavior": "bafybehavior",
+            "behavior": {"/": "bafybehavior"},
             "acl": ""
         }"#;
 
@@ -488,7 +488,7 @@ mod tests {
     fn deserializing_entity_accepts_null_state_field() {
         let raw = r#"{
             "kind": "/ma/stateless/python/0.0.1",
-            "behavior": "bafybehavior",
+            "behavior": {"/": "bafybehavior"},
             "acl": "",
             "state": null
         }"#;
