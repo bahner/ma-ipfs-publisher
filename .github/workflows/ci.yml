@@ -26,10 +26,6 @@ jobs:
             os: macos-latest
             binary: ma
             ext: ""
-          - target: x86_64-apple-darwin
-            os: macos-13
-            binary: ma
-            ext: ""
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             binary: ma.exe
