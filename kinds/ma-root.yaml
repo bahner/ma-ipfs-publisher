@@ -1,5 +1,6 @@
 protocol: /ma/root/0.0.1
 attributes:
+  stateful: false
   wasi: false
 api:
   - init
@@ -9,5 +10,3 @@ host_functions:
   - ma_reply
   - ma_create_entity
   - ma_delete_entity
-allow:
-  - create *

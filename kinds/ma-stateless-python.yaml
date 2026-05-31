@@ -1,5 +1,6 @@
 protocol: /ma/stateless/python/0.0.1
 attributes:
+  stateful: false
   wasi: true
 api:
   - handle_cast

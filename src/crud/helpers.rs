@@ -101,7 +101,16 @@ where
         warn!(old = %old_cid, new = %new_cid, error = %e, "CRUD pin_update failed");
     }
     update_stats_entities(ctx).await;
-    ctx.stats.write().await.root_cid = Some(new_cid.clone());
+    {
+        let mut stats = ctx.stats.write().await;
+        stats.root_cid = Some(new_cid.clone());
+        if let Some(serde_yaml::Value::Sequence(ref seq)) = manifest.config.get("owners") {
+            stats.owners = seq
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+        }
+    }
     Ok(new_cid)
 }
 

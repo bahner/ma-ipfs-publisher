@@ -1,5 +1,6 @@
 protocol: /ma/stateful/python/0.0.1
 attributes:
+  stateful: true
   wasi: true
 api:
   - handle_call

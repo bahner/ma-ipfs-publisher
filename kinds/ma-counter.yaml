@@ -8,5 +8,3 @@ api:
 host_functions:
   - ma_set_state
   - ma_reply
-allow:
-  - "*"
